@@ -14,7 +14,14 @@ type Role = "admin" | "asesor"
 // API). El rol vive en `app_metadata` de Supabase Auth (ver
 // scripts/manage-users.mjs), no en una tabla aparte.
 
-const PUBLIC_API_PATHS = new Set(["/api/auth/login", "/api/auth/logout"])
+// /api/chatwoot/webhook también es pública: la llama Chatwoot, no un
+// navegador con sesión — se protege con su propio secreto (?token=...),
+// ver ese route.ts.
+const PUBLIC_API_PATHS = new Set([
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/api/chatwoot/webhook",
+])
 
 // ============================================================================
 // CSP por nonce

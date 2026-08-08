@@ -17,9 +17,18 @@ import type { NewOrderDb } from "@/lib/types/order"
 
 // `active` es falso cuando la pestaña de WhatsApp sigue montada (para
 // cambiar de pestaña sin perder el estado ni recargar) pero no es la que
-// se está viendo — en ese caso se pausa el polling en segundo plano y se
-// refresca una vez al volver, en lugar de seguir pegándole a Chatwoot cada
-// pocos segundos sin que nadie esté mirando.
+// se está viendo — en ese caso se cierra la conexión en tiempo real y se
+// refresca una vez al volver, en lugar de mantenerla abierta sin que nadie
+// esté mirando.
+//
+// El aviso de "algo cambió" llega por SSE (/api/chatwoot/events), que a su
+// vez lo recibe del webhook de Chatwoot casi al instante — ya no hace falta
+// preguntar cada 5-6s "¿hay algo nuevo?". El polling que queda abajo
+// (FALLBACK_POLL_MS) es solo una red de seguridad, muy poco frecuente, por
+// si el webhook no está configurado en esta instancia de Chatwoot o la
+// conexión SSE se cae y tarda en reconectar.
+const FALLBACK_POLL_MS = 45_000
+
 export function useChatwoot(active: boolean = true) {
   const [conversations, setConversations] = useState<ChatwootConversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -27,7 +36,6 @@ export function useChatwoot(active: boolean = true) {
   const [source, setSource] = useState<DataSource>("demo")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const wasActive = useRef(active)
 
   const initialId = useRef<string | null>(null)
@@ -63,11 +71,14 @@ export function useChatwoot(active: boolean = true) {
     loadConversations()
   }, [loadConversations])
 
+  // Red de seguridad, no la vía principal — ver comentario de
+  // FALLBACK_POLL_MS arriba. La vía principal es el efecto de SSE, más
+  // abajo.
   useEffect(() => {
     if (!active) return
     const interval = setInterval(() => {
       loadConversations({ silent: true })
-    }, 6000)
+    }, FALLBACK_POLL_MS)
     return () => clearInterval(interval)
   }, [active, loadConversations])
 
@@ -99,17 +110,38 @@ export function useChatwoot(active: boolean = true) {
     markConversationRead(activeId).catch(() => {})
   }, [activeId])
 
+  // Conexión en tiempo real: un evento del webhook de Chatwoot llega aquí
+  // en milisegundos. "conversation_changed" siempre refresca el listado
+  // (ya viene filtrado por permisos desde el servidor); "message_changed"
+  // solo refresca los mensajes si es justo la conversación abierta — si es
+  // otra, alcanza con que se actualice su fila en el listado (último
+  // mensaje, no leídos).
   useEffect(() => {
-    if (!activeId || !active) return
+    if (!active) return
 
-    pollingRef.current = setInterval(() => {
-      loadMessages(activeId)
-    }, 5000)
+    const source = new EventSource("/api/chatwoot/events")
 
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current)
+    source.onmessage = (ev) => {
+      let data: { type?: string; conversationId?: string | null }
+      try {
+        data = JSON.parse(ev.data)
+      } catch {
+        return
+      }
+
+      if (data.type === "conversation_changed" || data.type === "message_changed") {
+        loadConversations({ silent: true })
+      }
+      if (data.type === "message_changed" && data.conversationId === activeId && activeId) {
+        loadMessages(activeId)
+      }
     }
-  }, [activeId, active, loadMessages])
+
+    // EventSource reconecta solo ante errores de red; no hace falta
+    // lógica de reintento a mano. Mientras se reconecta, FALLBACK_POLL_MS
+    // sigue cubriendo el listado.
+    return () => source.close()
+  }, [active, activeId, loadConversations, loadMessages])
 
   const selectConversation = useCallback((id: string) => {
     setActiveId((prev) => {
