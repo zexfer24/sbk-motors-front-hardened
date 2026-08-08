@@ -40,11 +40,23 @@ export function useChatwoot(active: boolean = true) {
 
   const initialId = useRef<string | null>(null)
 
+  // Con el SSE, varios eventos seguidos (p. ej. tres mensajes llegando en
+  // el mismo segundo) pueden disparar varios fetch de golpe. Si la red
+  // responde en un orden distinto al que salieron, una respuesta VIEJA que
+  // llega tarde pisaría a una más nueva que ya se había pintado — se ve
+  // como que el chat "vuelve atrás" un instante. Estos contadores marcan
+  // cuál fue la última petición disparada; si una respuesta llega y ya no
+  // es la más reciente, se descarta en vez de aplicarse.
+  const conversationsRequestId = useRef(0)
+  const messagesRequestId = useRef(0)
+
   const loadConversations = useCallback(async (options?: { silent?: boolean }) => {
+    const requestId = ++conversationsRequestId.current
     if (!options?.silent) setLoading(true)
     setError(null)
     try {
       const data = await fetchConversations()
+      if (requestId !== conversationsRequestId.current) return
       setConversations(data.conversations)
       setSource(data.source)
       if (!initialId.current && data.conversations.length > 0) {
@@ -52,17 +64,21 @@ export function useChatwoot(active: boolean = true) {
         setActiveId(data.conversations[0].id)
       }
     } catch {
+      if (requestId !== conversationsRequestId.current) return
       if (!options?.silent) setError("No se pudieron cargar las conversaciones.")
     } finally {
-      if (!options?.silent) setLoading(false)
+      if (requestId === conversationsRequestId.current && !options?.silent) setLoading(false)
     }
   }, [])
 
   const loadMessages = useCallback(async (conversationId: string) => {
+    const requestId = ++messagesRequestId.current
     try {
       const data = await fetchMessages(conversationId)
+      if (requestId !== messagesRequestId.current) return
       setMessages(data.messages)
     } catch {
+      if (requestId !== messagesRequestId.current) return
       setMessages([])
     }
   }, [])
