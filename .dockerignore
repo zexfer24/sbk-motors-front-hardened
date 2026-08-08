@@ -1,0 +1,24 @@
+node_modules
+.next
+.git
+.env
+.env.local
+.env*.local
+npm-debug.log*
+pnpm-debug.log*
+README.md
+db
+*.md
+
+# El Dockerfile hace `COPY . .` en la etapa `builder`. Todo lo que no esté
+# aquí acaba dentro de esa capa de la imagen, aunque la etapa final no lo
+# copie — y las capas intermedias son recuperables desde la caché de build.
+#
+# credentials-login.txt (contraseñas en texto plano de las 7 cuentas) estaba
+# en .gitignore pero NO aquí, así que entraba en la imagen. Ahora se excluye
+# por patrón, para que un archivo futuro con el mismo nombre no repita el
+# problema.
+credentials*.txt
+*.pem
+*.key
+secrets*

@@ -1,0 +1,19 @@
+allowBuilds:
+  esbuild: true
+  sharp: true
+
+# pnpm v11 ya no lee el campo "pnpm.overrides" de package.json — lo ignora en
+# silencio con un warning. Los overrides viven aquí. (En el repo original
+# estaban en package.json fijando `hono: 4.12.25`, una versión vulnerable, y
+# encima no se aplicaban.)
+#
+# Estos fuerzan versiones parcheadas en dependencias transitivas que arrastran
+# avisos de seguridad y que ningún paquete directo permite subir por sí solo.
+overrides:
+  undici: ^7.29.0
+  brace-expansion: ^5.0.9
+  nanoid: ^3.3.17
+  js-yaml: ^4.3.1
+  fast-uri: ^3.1.5
+  ip-address: ^10.3.1
+  hono: ^4.12.34

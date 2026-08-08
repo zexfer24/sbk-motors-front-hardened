@@ -1,0 +1,74 @@
+"use client"
+
+import { useCallback, useEffect, useState } from "react"
+import type { DataSource } from "@/lib/api/shared"
+import { caracasToday } from "@/lib/caracas-time"
+
+export interface DashboardKpi {
+  id: string
+  label: string
+  value: string
+  trend: number
+  hint: string
+  available: boolean
+}
+
+export interface DashboardHourly {
+  labels: string[]
+  revenue: number[]
+  chats: number[]
+  messages: number[]
+  chatwootAvailable: boolean
+}
+
+function baseUrl() {
+  if (typeof window !== "undefined") return ""
+  return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
+}
+
+const EMPTY_HOURLY: DashboardHourly = { labels: [], revenue: [], chats: [], messages: [], chatwootAvailable: false }
+
+// El Panel es un resumen "del día" — puede ser hoy o un día pasado que el
+// usuario eligió ver. `date` (YYYY-MM-DD, Caracas) por defecto es hoy.
+export function useDashboard(date: string = caracasToday()) {
+  const [kpis, setKpis] = useState<DashboardKpi[]>([])
+  const [hourly, setHourly] = useState<DashboardHourly>(EMPTY_HOURLY)
+  const [source, setSource] = useState<DataSource>("demo")
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [kpisRes, hourlyRes] = await Promise.all([
+        fetch(`${baseUrl()}/api/dashboard/kpis?date=${date}`, { cache: "no-store" }),
+        fetch(`${baseUrl()}/api/dashboard/hourly?date=${date}`, { cache: "no-store" }),
+      ])
+      if (!kpisRes.ok || !hourlyRes.ok) throw new Error("No se pudo cargar el panel")
+
+      const kpisData = await kpisRes.json()
+      const hourlyData = await hourlyRes.json()
+
+      setKpis(kpisData.kpis as DashboardKpi[])
+      setHourly({
+        labels: hourlyData.labels as string[],
+        revenue: hourlyData.revenue as number[],
+        chats: hourlyData.chats as number[],
+        messages: hourlyData.messages as number[],
+        chatwootAvailable: hourlyData.chatwootAvailable as boolean,
+      })
+      setSource(kpisData.source as DataSource)
+    } catch {
+      setError("No se pudo cargar el panel. Intenta de nuevo en un momento.")
+    } finally {
+      setLoading(false)
+    }
+  }, [date])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  return { kpis, hourly, source, loading, error, reload: load }
+}
