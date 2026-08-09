@@ -11,7 +11,7 @@ import { BarChartPanel } from '@/components/dashboard/bar-chart-panel'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
-export function DashboardView() {
+export function DashboardView({ active = true }: { active?: boolean }) {
   const [date, setDate] = useState(caracasToday())
   const isToday = date === caracasToday()
   const dateInputRef = useRef<HTMLInputElement>(null)
@@ -35,7 +35,7 @@ export function DashboardView() {
     setDate(value <= caracasToday() ? value : caracasToday())
   }
 
-  const { kpis, hourly, loading, error } = useDashboard(date)
+  const { kpis, hourly, loading, error } = useDashboard(date, active)
   const { rate, loading: rateLoading, available: rateAvailable } = useExchangeRate(date)
 
   return (

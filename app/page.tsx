@@ -19,8 +19,9 @@ const ASESOR_VIEWS: View[] = ['chat', 'clientes', 'inventario']
 // (oculta con opacidad + pointer-events, no desmontada) para las
 // siguientes veces — así cambiar de pestaña es instantáneo y no repite la
 // carga de datos ni el parpadeo de "cargando" cada vez. Solo la pestaña
-// activa recibe `active`, para que WhatsApp (la única con polling) pause
-// sus peticiones en segundo plano mientras no se está viendo.
+// activa recibe `active`, para que WhatsApp y el Panel (las que hacen
+// polling) pausen sus peticiones en segundo plano mientras no se están
+// viendo.
 export default function Page() {
   const { user, loading, signOut } = useAuth()
   const allowedViews = user?.role === 'admin' ? ALL_VIEWS : ASESOR_VIEWS
@@ -82,7 +83,7 @@ export default function Page() {
               )}
               aria-hidden={!isActive}
             >
-              {v === 'panel' && <DashboardView />}
+              {v === 'panel' && <DashboardView active={isActive} />}
               {v === 'chat' && <ChatView active={isActive} />}
               {v === 'clientes' && <CrmView />}
               {v === 'inventario' && <InventoryView />}

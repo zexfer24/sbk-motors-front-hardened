@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server"
 import { getSupabase } from "@/lib/supabase/client"
 import { listOrders } from "@/lib/api/orders-demo-store"
-import { caracasOperatingHoursBoundsUtc, caracasToday, isValidDateStr, shiftDateStr } from "@/lib/caracas-time"
+import { caracasDayBoundsUtc, caracasToday, isValidDateStr, shiftDateStr } from "@/lib/caracas-time"
 import { getChatwootKpiStats } from "@/lib/chatwoot-stats"
+import { serverError } from "@/lib/api-errors"
 
 // KPIs del Panel. "Dinero generado hoy" y "Ventas completadas" salen de la
-// tabla `orders` (ver db/orders_schema.sql), acotadas al horario de
-// atención (9am-9pm) para que coincidan con la gráfica de "Actividad por
-// hora". "Nuevos chats", "Clientes totales" y "Tasa de éxito" salen de
-// Chatwoot (ver lib/chatwoot-stats.ts) — si Chatwoot no responde, se
-// devuelven marcados como `available: false` en vez de inventar un número.
+// tabla `orders` (ver db/orders_schema.sql), acotadas al día completo
+// (00:00-23:59 Caracas) — el negocio puede facturar una venta que se
+// cerró fuera del horario de atención, y esa venta no debe desaparecer de
+// las cifras del día. La ventana de 9am-9pm solo aplica a la gráfica de
+// "Actividad por hora" (ver app/api/dashboard/hourly/route.ts), donde sí
+// tiene sentido visual. "Nuevos chats", "Clientes totales" y "Tasa de
+// éxito" salen de Chatwoot (ver lib/chatwoot-stats.ts) — si Chatwoot no
+// responde, se devuelven marcados como `available: false` en vez de
+// inventar un número.
 
 interface DashboardKpi {
   id: string
@@ -37,8 +42,8 @@ export async function GET(request: Request) {
   const date = dateParam && dateParam <= caracasToday() ? dateParam : caracasToday()
 
   const supabase = getSupabase()
-  const todayBounds = caracasOperatingHoursBoundsUtc(date)
-  const yesterdayBounds = caracasOperatingHoursBoundsUtc(shiftDateStr(date, -1))
+  const todayBounds = caracasDayBoundsUtc(date)
+  const yesterdayBounds = caracasDayBoundsUtc(shiftDateStr(date, -1))
 
   let todayTotals: number[]
   let yesterdayTotals: number[]
@@ -58,8 +63,11 @@ export async function GET(request: Request) {
     ])
 
     if (todayRes.error || yesterdayRes.error) {
-      const detail = (todayRes.error ?? yesterdayRes.error)?.message
-      return NextResponse.json({ error: "error_supabase", detail }, { status: 500 })
+      return serverError(
+        "error_supabase",
+        "dashboard/kpis: consulta de orders",
+        todayRes.error ?? yesterdayRes.error,
+      )
     }
 
     todayTotals = (todayRes.data ?? []).map((o) => Number(o.total_usd))

@@ -28,17 +28,23 @@ function baseUrl() {
 
 const EMPTY_HOURLY: DashboardHourly = { labels: [], revenue: [], chats: [], messages: [], chatwootAvailable: false }
 
+const POLL_INTERVAL_MS = 45_000
+
 // El Panel es un resumen "del día" — puede ser hoy o un día pasado que el
 // usuario eligió ver. `date` (YYYY-MM-DD, Caracas) por defecto es hoy.
-export function useDashboard(date: string = caracasToday()) {
+// `active` es falso cuando la pestaña del Panel sigue montada pero no es
+// la que se está viendo — en ese caso se pausa el refresco automático en
+// segundo plano (igual que en use-chatwoot.ts) en vez de seguir pegándole
+// a Supabase/Chatwoot cada rato sin que nadie esté mirando.
+export function useDashboard(date: string = caracasToday(), active: boolean = true) {
   const [kpis, setKpis] = useState<DashboardKpi[]>([])
   const [hourly, setHourly] = useState<DashboardHourly>(EMPTY_HOURLY)
   const [source, setSource] = useState<DataSource>("demo")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoading(true)
     setError(null)
     try {
       const [kpisRes, hourlyRes] = await Promise.all([
@@ -60,15 +66,27 @@ export function useDashboard(date: string = caracasToday()) {
       })
       setSource(kpisData.source as DataSource)
     } catch {
-      setError("No se pudo cargar el panel. Intenta de nuevo en un momento.")
+      if (!options?.silent) setError("No se pudo cargar el panel. Intenta de nuevo en un momento.")
     } finally {
-      setLoading(false)
+      if (!options?.silent) setLoading(false)
     }
   }, [date])
 
   useEffect(() => {
     load()
   }, [load])
+
+  // Solo tiene sentido refrescar solo/a "hoy" — un día pasado ya cerró y
+  // no va a cambiar.
+  const isToday = date === caracasToday()
+
+  useEffect(() => {
+    if (!active || !isToday) return
+    const interval = setInterval(() => {
+      load({ silent: true })
+    }, POLL_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [active, isToday, load])
 
   return { kpis, hourly, source, loading, error, reload: load }
 }
