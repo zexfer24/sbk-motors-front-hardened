@@ -8,12 +8,17 @@
 // caché de hoy tiene más de RATE_STALE_MS — así el Panel refleja un cambio
 // en la página del BCV en minutos, no al día siguiente.
 //
-// Fuente externa: https://ve.dolarapi.com/v1/dolares/oficial — API pública
-// gratuita, sin auth, que espeja la tasa oficial del BCV.
+// Fuente principal: bcv.org.ve directo — se lee el HTML de la portada y se
+// extrae el valor del widget "USD" (id="dolar"). Antes se usaba solo
+// https://ve.dolarapi.com/v1/dolares/oficial (API espejo, gratuita, sin
+// auth), pero se detectó que puede quedarse desactualizada varios días sin
+// avisar (fechaActualizacion vieja, tasa distinta a la real). Esa API
+// queda como respaldo, solo si bcv.org.ve no responde — les pasa de vez en
+// cuando que el sitio se cae.
 //
 // En modo demo (sin Supabase configurado) se cachea en globalThis, igual
-// que los demo-stores existentes, para no pegarle a la API externa en cada
-// request tampoco.
+// que los demo-stores existentes, para no pegarle a las fuentes externas en
+// cada request tampoco.
 // ============================================================================
 
 import { getSupabase } from "@/lib/supabase/client"
@@ -25,8 +30,28 @@ export interface ExchangeRate {
   source: string
 }
 
+const BCV_OFFICIAL_URL = "https://www.bcv.org.ve/"
 const BCV_MIRROR_URL = "https://ve.dolarapi.com/v1/dolares/oficial"
 const RATE_STALE_MS = 15 * 60 * 1000
+
+// El widget del dólar en la portada del BCV es el único con id="dolar" en
+// toda la página, y el <strong class="strong-tb"> que le sigue es su valor
+// (los otros widgets de moneda —EUR, CNY, TRY, RUB— no llevan id propio).
+// El número usa coma como separador decimal (formato venezolano); si algún
+// día la tasa supera los miles también llevaría punto de millar, por eso se
+// quita cualquier punto antes de convertir la coma en punto decimal.
+const BCV_WIDGET_PATTERN = /id="dolar"[\s\S]*?<strong class="strong-tb">\s*([\d.,]+)\s*<\/strong>/
+
+async function fetchFromBcvOfficial(): Promise<number> {
+  const res = await fetch(BCV_OFFICIAL_URL, { cache: "no-store" })
+  if (!res.ok) throw new Error(`bcv_official_error_${res.status}`)
+  const html = await res.text()
+  const match = html.match(BCV_WIDGET_PATTERN)
+  if (!match) throw new Error("bcv_official_parse_error")
+  const rate = Number(match[1].replace(/\./g, "").replace(",", "."))
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error("bcv_official_invalid_rate")
+  return rate
+}
 
 async function fetchFromMirror(): Promise<number> {
   const res = await fetch(BCV_MIRROR_URL, { cache: "no-store" })
@@ -35,6 +60,15 @@ async function fetchFromMirror(): Promise<number> {
   const rate = Number(data.promedio)
   if (!Number.isFinite(rate) || rate <= 0) throw new Error("bcv_mirror_invalid_rate")
   return rate
+}
+
+async function fetchRate(): Promise<number> {
+  try {
+    return await fetchFromBcvOfficial()
+  } catch (err) {
+    console.warn(`[bcv-rate] bcv.org.ve falló, usando espejo: ${err instanceof Error ? err.message : err}`)
+    return await fetchFromMirror()
+  }
 }
 
 interface DemoRateEntry {
@@ -59,7 +93,7 @@ export async function getTodayRate(): Promise<ExchangeRate> {
     const store = getDemoStore()
     const cached = store.get(date)
     if (!cached || Date.now() - cached.fetchedAtMs > RATE_STALE_MS) {
-      const rate = await fetchFromMirror()
+      const rate = await fetchRate()
       store.set(date, { rate, fetchedAtMs: Date.now() })
       return { rate, date, source: "bcv" }
     }
@@ -76,7 +110,7 @@ export async function getTodayRate(): Promise<ExchangeRate> {
     return { rate: Number(existing.rate), date, source: "bcv" }
   }
 
-  const rate = await fetchFromMirror()
+  const rate = await fetchRate()
 
   await supabase
     .from("exchange_rates")
