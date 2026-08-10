@@ -3,7 +3,12 @@
 import { useEffect, useId, useState } from 'react'
 import { Loader2, MessageSquarePlus, Search, User, X } from 'lucide-react'
 import { fetchContacts } from '@/lib/api/contacts'
-import { fetchWhatsappTemplates, type StartConversationInput, type WhatsappTemplate } from '@/lib/api/chatwoot'
+import {
+  fetchWhatsappTemplates,
+  type StartConversationInput,
+  type WhatsappInboxTemplates,
+  type WhatsappTemplate,
+} from '@/lib/api/chatwoot'
 import type { Contact } from '@/lib/types/contact'
 import { cn } from '@/lib/utils'
 
@@ -36,7 +41,8 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [rawPhone, setRawPhone] = useState('')
   const [rawName, setRawName] = useState('')
-  const [templates, setTemplates] = useState<WhatsappTemplate[]>([])
+  const [inboxes, setInboxes] = useState<WhatsappInboxTemplates[]>([])
+  const [selectedInboxId, setSelectedInboxId] = useState<number | null>(null)
   const [templatesLoading, setTemplatesLoading] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<WhatsappTemplate | null>(null)
   const [params, setParams] = useState<string[]>([])
@@ -52,8 +58,15 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
       .finally(() => setContactsLoading(false))
     setTemplatesLoading(true)
     fetchWhatsappTemplates()
-      .then(setTemplates)
-      .catch(() => setTemplates([]))
+      .then((data) => {
+        setInboxes(data)
+        // Con un solo buzón no hace falta que el asesor elija — se
+        // preselecciona para no agregarle un paso a un flujo que hasta
+        // ahora era de un solo número. Con más de uno, se deja sin elegir
+        // a propósito para forzar la selección.
+        setSelectedInboxId(data.length === 1 ? data[0].inboxId : null)
+      })
+      .catch(() => setInboxes([]))
       .finally(() => setTemplatesLoading(false))
   }, [open])
 
@@ -66,6 +79,7 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
     setSelectedContact(null)
     setRawPhone('')
     setRawName('')
+    setSelectedInboxId(null)
     setSelectedTemplate(null)
     setParams([])
     setFormError(null)
@@ -77,6 +91,14 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
     (c) =>
       c.name.toLowerCase().includes(contactQuery.toLowerCase()) || c.phone.includes(contactQuery),
   )
+
+  const templates = inboxes.find((ib) => ib.inboxId === selectedInboxId)?.templates ?? []
+
+  function selectInbox(inboxId: number) {
+    setSelectedInboxId(inboxId)
+    setSelectedTemplate(null)
+    setParams([])
+  }
 
   function selectTemplate(t: WhatsappTemplate) {
     setSelectedTemplate(t)
@@ -107,6 +129,10 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
       setFormError('Completa el nombre del contacto.')
       return
     }
+    if (!selectedInboxId) {
+      setFormError('Elige desde qué buzón se va a enviar el chat.')
+      return
+    }
     if (!selectedTemplate) {
       setFormError('Selecciona una plantilla para iniciar el chat.')
       return
@@ -118,6 +144,7 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
 
     setSubmitting(true)
     const result = await onStart({
+      inboxId: selectedInboxId,
       phone,
       name,
       templateName: selectedTemplate.name,
@@ -260,6 +287,29 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
             </div>
           )}
 
+          {!templatesLoading && inboxes.length > 1 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-muted-foreground">Enviar desde</span>
+              <div className="flex flex-col gap-2">
+                {inboxes.map((ib) => (
+                  <button
+                    key={ib.inboxId}
+                    type="button"
+                    onClick={() => selectInbox(ib.inboxId)}
+                    className={cn(
+                      'rounded-lg border px-3.5 py-2.5 text-left text-sm font-medium transition-colors',
+                      selectedInboxId === ib.inboxId
+                        ? 'border-primary/60 bg-primary/5 text-foreground'
+                        : 'border-border text-muted-foreground hover:bg-secondary/60',
+                    )}
+                  >
+                    {ib.inboxName}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-semibold text-muted-foreground">Plantilla para abrir el chat</span>
             {templatesLoading ? (
@@ -267,10 +317,14 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Cargando plantillas…
               </div>
+            ) : inboxes.length > 1 && !selectedInboxId ? (
+              <p className="rounded-lg border border-dashed border-border px-3.5 py-3 text-xs text-muted-foreground">
+                Elige primero desde qué buzón vas a escribir.
+              </p>
             ) : templates.length === 0 ? (
               <p className="rounded-lg border border-dashed border-border px-3.5 py-3 text-xs text-muted-foreground">
-                No hay plantillas aprobadas todavía — crea y espera la aprobación de una en Meta
-                Business Manager antes de poder iniciar chats nuevos.
+                No hay plantillas aprobadas todavía para este buzón — crea y espera la aprobación
+                de una en Meta Business Manager antes de poder iniciar chats nuevos.
               </p>
             ) : (
               <div className="flex flex-col gap-2">

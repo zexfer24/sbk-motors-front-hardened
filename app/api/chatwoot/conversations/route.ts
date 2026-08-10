@@ -57,9 +57,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "cuerpo_invalido" }, { status: 400 })
   }
 
-  const { phone, name, templateName, templateCategory, templateLanguage, bodyParams } =
+  const { inboxId, phone, name, templateName, templateCategory, templateLanguage, bodyParams } =
     body as Record<string, unknown>
 
+  if (typeof inboxId !== "number" || !Number.isInteger(inboxId) || inboxId <= 0) {
+    return NextResponse.json({ error: "buzon_invalido" }, { status: 400 })
+  }
   if (typeof phone !== "string" || !/^\+\d{8,15}$/.test(phone)) {
     return NextResponse.json({ error: "telefono_invalido" }, { status: 400 })
   }
@@ -81,6 +84,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await startWhatsappConversation({
+      inboxId,
       phone,
       name: name.trim(),
       templateName: templateName.trim(),

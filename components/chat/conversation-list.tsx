@@ -224,6 +224,11 @@ export function ConversationList({
                       )}
                       {c.handledBy === 'ai' ? 'IA' : 'Asesor'}
                     </span>
+                    {c.inboxName && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
+                        {c.inboxName}
+                      </span>
+                    )}
                   </div>
                 </div>
               </button>

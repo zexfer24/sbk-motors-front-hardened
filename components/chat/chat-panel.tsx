@@ -151,6 +151,11 @@ export function ChatPanel({
           <p className="flex items-center gap-1.5 truncate whitespace-nowrap font-mono text-xs text-muted-foreground">
             <Phone className="h-3 w-3 shrink-0" />
             {conversation.phone}
+            {conversation.inboxName && (
+              <span className="rounded-full bg-secondary px-1.5 py-0.5 font-sans text-[0.65rem] normal-case text-muted-foreground">
+                {conversation.inboxName}
+              </span>
+            )}
             {conversation.typing && (
               <span className="ml-1 text-success">· escribiendo…</span>
             )}

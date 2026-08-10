@@ -21,14 +21,23 @@ export interface WhatsappTemplate {
   components: WhatsappTemplateComponent[]
 }
 
-export async function fetchWhatsappTemplates(): Promise<WhatsappTemplate[]> {
+export interface WhatsappInboxTemplates {
+  inboxId: number
+  inboxName: string
+  templates: WhatsappTemplate[]
+}
+
+// Agrupadas por buzón — cada número de WhatsApp tiene su propio set de
+// plantillas aprobadas por Meta, no se comparten entre buzones.
+export async function fetchWhatsappTemplates(): Promise<WhatsappInboxTemplates[]> {
   const res = await fetch(`${baseUrl()}/api/chatwoot/templates`, { cache: "no-store" })
   if (!res.ok) throw new Error("No se pudieron cargar las plantillas")
   const data = await res.json()
-  return data.templates as WhatsappTemplate[]
+  return data.inboxes as WhatsappInboxTemplates[]
 }
 
 export interface StartConversationInput {
+  inboxId: number
   phone: string
   name: string
   templateName: string

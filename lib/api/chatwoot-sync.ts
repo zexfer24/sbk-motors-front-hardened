@@ -8,8 +8,12 @@
 
 import { chatwootFetch } from "@/lib/chatwoot/client"
 import { upsertContactFromChatwoot } from "@/lib/api/contacts-demo-store"
+import { listInboxes } from "@/lib/chatwoot/inboxes"
 
-export function mapChatwootConversation(raw: Record<string, unknown>) {
+export function mapChatwootConversation(
+  raw: Record<string, unknown>,
+  inboxNames: Map<number, string>,
+) {
   const meta = (raw.meta as Record<string, unknown>) ?? {}
   const sender = (meta.sender as Record<string, unknown>) ?? {}
   const assignee = meta.assignee as Record<string, unknown> | null | undefined
@@ -18,6 +22,7 @@ export function mapChatwootConversation(raw: Record<string, unknown>) {
       ? (raw.messages[raw.messages.length - 1] as Record<string, unknown>)
       : null
   ) as Record<string, unknown> | null
+  const inboxId = raw.inbox_id != null ? Number(raw.inbox_id) : null
 
   return {
     id: String(raw.id ?? ""),
@@ -26,6 +31,8 @@ export function mapChatwootConversation(raw: Record<string, unknown>) {
     avatarUrl: sender.thumbnail ? String(sender.thumbnail) : null,
     assigneeId: assignee ? Number(assignee.id) : null,
     assigneeName: assignee ? String(assignee.name ?? "") : null,
+    inboxId,
+    inboxName: inboxId !== null ? inboxNames.get(inboxId) ?? `Buzón ${inboxId}` : null,
     lastMessage: lastMsg ? String(lastMsg.content ?? "") : null,
     lastMessageAt: lastMsg
       ? new Date((lastMsg.created_at as number) * 1000).toISOString()
@@ -49,8 +56,14 @@ export type MappedConversation = ReturnType<typeof mapChatwootConversation>
 // un chat "duplicado" en la lista, nos quedamos solo con la conversación
 // más reciente por contacto (por teléfono); las anteriores siguen
 // existiendo en Chatwoot con su historial intacto, solo no se listan aquí.
+//
+// La clave incluye el buzón: con más de un número de WhatsApp activo, un
+// mismo cliente puede tener una conversación abierta en el buzón viejo y,
+// por separado, escribirle al buzón nuevo (típico durante una migración,
+// si todavía tiene guardado el número anterior) — son dos conversaciones
+// reales y ninguna debe tapar a la otra en la lista.
 function dedupeByPhone(conversations: MappedConversation[]): MappedConversation[] {
-  const latestByPhone = new Map<string, MappedConversation>()
+  const latestByKey = new Map<string, MappedConversation>()
   const withoutPhone: MappedConversation[] = []
 
   for (const c of conversations) {
@@ -58,15 +71,16 @@ function dedupeByPhone(conversations: MappedConversation[]): MappedConversation[
       withoutPhone.push(c)
       continue
     }
-    const existing = latestByPhone.get(c.phone)
+    const key = `${c.phone}:${c.inboxId ?? ""}`
+    const existing = latestByKey.get(key)
     const activity = c.lastMessageAt ?? c.createdAt
     const existingActivity = existing ? (existing.lastMessageAt ?? existing.createdAt) : null
     if (!existing || activity > existingActivity!) {
-      latestByPhone.set(c.phone, c)
+      latestByKey.set(key, c)
     }
   }
 
-  return [...latestByPhone.values(), ...withoutPhone]
+  return [...latestByKey.values(), ...withoutPhone]
 }
 
 // Pide las conversaciones a Chatwoot y sincroniza sus contactos en el CRM
@@ -79,11 +93,17 @@ export async function fetchAndSyncConversations(): Promise<
     // status=all — por defecto Chatwoot solo devuelve conversaciones
     // "open"; sin esto, una conversación resuelta (p. ej. tras cerrar una
     // venta) desaparecería por completo en vez de pasar a "Cerrados".
-    const data = await chatwootFetch<{ data: { payload: Record<string, unknown>[] } }>(
-      "/conversations?status=all",
-      { cache: "no-store" },
+    const [data, inboxes] = await Promise.all([
+      chatwootFetch<{ data: { payload: Record<string, unknown>[] } }>(
+        "/conversations?status=all",
+        { cache: "no-store" },
+      ),
+      listInboxes().catch(() => []),
+    ])
+    const inboxNames = new Map(inboxes.map((ib) => [ib.id, ib.name]))
+    const conversations = dedupeByPhone(
+      data.data.payload.map((raw) => mapChatwootConversation(raw, inboxNames)),
     )
-    const conversations = dedupeByPhone(data.data.payload.map(mapChatwootConversation))
 
     for (const c of conversations) {
       if (!c.phone) continue

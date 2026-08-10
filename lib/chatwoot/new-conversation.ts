@@ -26,6 +26,7 @@
 // ============================================================================
 
 import { chatwootFetch } from "@/lib/chatwoot/client"
+import { listWhatsappInboxes } from "@/lib/chatwoot/inboxes"
 
 export interface WhatsappTemplateComponent {
   type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS"
@@ -42,29 +43,33 @@ export interface WhatsappTemplate {
   components: WhatsappTemplateComponent[]
 }
 
-let cachedInboxId: number | null | undefined
-
-async function getWhatsappInboxId(): Promise<number | null> {
-  if (cachedInboxId !== undefined) return cachedInboxId
-  try {
-    const data = await chatwootFetch<{ payload: Array<Record<string, unknown>> }>("/inboxes")
-    const inbox =
-      data.payload.find((ib) => ib.channel_type === "Channel::Whatsapp") ?? data.payload[0] ?? null
-    cachedInboxId = inbox ? Number(inbox.id) : null
-  } catch {
-    cachedInboxId = null
-  }
-  return cachedInboxId
+export interface WhatsappInboxTemplates {
+  inboxId: number
+  inboxName: string
+  templates: WhatsappTemplate[]
 }
 
 // Solo plantillas APROBADAS por Meta — las pendientes/rechazadas no se
 // pueden usar para enviar, mostrarlas solo confundiría al asesor.
-export async function getWhatsappTemplates(): Promise<WhatsappTemplate[]> {
-  const inboxId = await getWhatsappInboxId()
-  if (inboxId === null) return []
+async function approvedTemplatesFor(inboxId: number): Promise<WhatsappTemplate[]> {
   const inbox = await chatwootFetch<Record<string, unknown>>(`/inboxes/${inboxId}`)
   const templates = (inbox.message_templates as WhatsappTemplate[] | undefined) ?? []
   return templates.filter((t) => t.status === "APPROVED")
+}
+
+// Cada número de WhatsApp tiene su propio set de plantillas aprobadas por
+// Meta (no se comparten entre buzones) — por eso "Nuevo chat" necesita ver
+// las de TODOS los buzones de WhatsApp, agrupadas, y no solo las del primero
+// que se encuentre.
+export async function getWhatsappInboxesWithTemplates(): Promise<WhatsappInboxTemplates[]> {
+  const inboxes = await listWhatsappInboxes()
+  return Promise.all(
+    inboxes.map(async (inbox) => ({
+      inboxId: inbox.id,
+      inboxName: inbox.name,
+      templates: await approvedTemplatesFor(inbox.id),
+    })),
+  )
 }
 
 interface ContactInboxEntry {
@@ -123,6 +128,8 @@ async function findOrCreateContact(
 }
 
 export interface StartConversationInput {
+  /** Buzón de WhatsApp desde el que se manda — cada número tiene sus propias plantillas y contactos. */
+  inboxId: number
   phone: string
   name: string
   templateName: string
@@ -135,9 +142,7 @@ export interface StartConversationInput {
 export async function startWhatsappConversation(
   input: StartConversationInput,
 ): Promise<{ conversationId: string }> {
-  const inboxId = await getWhatsappInboxId()
-  if (inboxId === null) throw new Error("sin_inbox_whatsapp")
-
+  const { inboxId } = input
   const { contactId, sourceId } = await findOrCreateContact(input.phone, input.name, inboxId)
 
   const conversation = await chatwootFetch<{ id: number }>("/conversations", {

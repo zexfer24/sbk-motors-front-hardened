@@ -28,6 +28,9 @@ export interface ChatwootConversation {
   avatarUrl?: string | null
   assigneeId?: number | null
   assigneeName?: string | null
+  /** Buzón de Chatwoot del que viene — útil con más de un número de WhatsApp activo. */
+  inboxId?: number | null
+  inboxName?: string | null
   lastMessage: string | null
   lastMessageAt: string | null
   /** cuándo se abrió la conversación (distinto de lastMessageAt) — usado para "nuevos chats" del Panel */
