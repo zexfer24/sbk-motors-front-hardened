@@ -6,6 +6,50 @@ function baseUrl() {
   return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
 }
 
+export interface WhatsappTemplateComponent {
+  type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS"
+  format?: string
+  text?: string
+}
+
+export interface WhatsappTemplate {
+  id: string
+  name: string
+  status: string
+  category: string
+  language: string
+  components: WhatsappTemplateComponent[]
+}
+
+export async function fetchWhatsappTemplates(): Promise<WhatsappTemplate[]> {
+  const res = await fetch(`${baseUrl()}/api/chatwoot/templates`, { cache: "no-store" })
+  if (!res.ok) throw new Error("No se pudieron cargar las plantillas")
+  const data = await res.json()
+  return data.templates as WhatsappTemplate[]
+}
+
+export interface StartConversationInput {
+  phone: string
+  name: string
+  templateName: string
+  templateCategory: string
+  templateLanguage: string
+  bodyParams: string[]
+}
+
+export async function startNewConversation(
+  input: StartConversationInput,
+): Promise<{ conversationId: string } | { error: string }> {
+  const res = await fetch(`${baseUrl()}/api/chatwoot/conversations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  const data = await res.json()
+  if (!res.ok) return { error: data.error ?? "error_desconocido" }
+  return { conversationId: data.conversationId as string }
+}
+
 export async function fetchConversations(): Promise<{
   conversations: ChatwootConversation[]
   source: DataSource

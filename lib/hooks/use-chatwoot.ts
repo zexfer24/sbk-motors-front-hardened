@@ -8,7 +8,9 @@ import {
   markConversationRead,
   sendImageMessage,
   sendMessage,
+  startNewConversation,
   toggleIntervention,
+  type StartConversationInput,
 } from "@/lib/api/chatwoot"
 import { addOrder } from "@/lib/api/orders"
 import type { ChatwootConversation, ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
@@ -240,6 +242,22 @@ export function useChatwoot(active: boolean = true) {
     [],
   )
 
+  // Inicia un chat con un contacto/número nuevo mandando una plantilla
+  // preaprobada (necesario fuera de la ventana de 24h de WhatsApp). Al
+  // terminar, recarga el listado (para que la conversación nueva aparezca
+  // con sus datos reales de Chatwoot, ya filtrados por permisos en el
+  // servidor) y la deja seleccionada.
+  const startConversation = useCallback(
+    async (input: StartConversationInput): Promise<{ error: string } | { ok: true }> => {
+      const result = await startNewConversation(input)
+      if ("error" in result) return result
+      await loadConversations({ silent: true })
+      setActiveId(result.conversationId)
+      return { ok: true }
+    },
+    [loadConversations],
+  )
+
   const activeConversation = conversations.find((c) => c.id === activeId) ?? null
 
   return {
@@ -260,6 +278,7 @@ export function useChatwoot(active: boolean = true) {
     sendImage,
     toggle,
     closeSale,
+    startConversation,
     reload: loadConversations,
   }
 }

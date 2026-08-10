@@ -8,6 +8,30 @@ function baseUrl() {
   return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
 }
 
+export interface CustomerLookup {
+  customerName: string
+  customerCedula: string | null
+  state: string
+  city: string
+  address: string
+}
+
+export async function fetchCustomerByPhone(phone: string): Promise<CustomerLookup | null> {
+  const res = await fetch(`${baseUrl()}/api/customers/lookup?phone=${encodeURIComponent(phone)}`, {
+    cache: "no-store",
+  })
+  if (!res.ok) return null
+  const data = await res.json()
+  if (!data.found) return null
+  return {
+    customerName: data.customerName,
+    customerCedula: data.customerCedula,
+    state: data.state,
+    city: data.city,
+    address: data.address,
+  }
+}
+
 export async function fetchOrders(): Promise<{ orders: OrderDb[]; source: DataSource }> {
   const res = await fetch(`${baseUrl()}/api/orders`, { cache: "no-store" })
   if (!res.ok) throw new Error("No se pudieron cargar las ventas")

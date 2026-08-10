@@ -46,3 +46,11 @@ export function updateOrderStatus(id: string, status: OrderStatus): OrderDb | nu
   order.status = status
   return order
 }
+
+// Para prellenar "Cerrar venta" con los datos de la última vez que ese
+// número compró — ver app/api/customers/lookup/route.ts.
+export function findLatestOrderByPhone(phone: string): OrderDb | null {
+  const matches = getStore().filter((o) => o.customerPhone === phone)
+  if (matches.length === 0) return null
+  return matches.reduce((latest, o) => (o.createdAt > latest.createdAt ? o : latest))
+}

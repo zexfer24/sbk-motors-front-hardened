@@ -10,14 +10,17 @@ import {
   MessageSquareText,
   Paperclip,
   Phone,
+  Settings2,
   SendHorizonal,
 } from 'lucide-react'
 import type { ChatwootConversation, ChatwootMessage } from '@/lib/types/chatwoot'
 import type { NewOrderDb } from '@/lib/types/order'
 import { MessageBubble } from '@/components/chat/message-bubble'
 import { CloseSaleModal } from '@/components/chat/close-sale-modal'
+import { QuickRepliesManagerModal } from '@/components/chat/quick-replies-manager-modal'
 import { avatarColor } from '@/lib/avatar-color'
-import { QUICK_REPLIES } from '@/lib/quick-replies'
+import { useAuth } from '@/lib/hooks/use-auth'
+import { useQuickReplies } from '@/lib/hooks/use-quick-replies'
 import { cn } from '@/lib/utils'
 
 interface ChatPanelProps {
@@ -46,10 +49,19 @@ export function ChatPanel({
   const [imageUploading, setImageUploading] = useState(false)
   const [imageError, setImageError] = useState<string | null>(null)
   const [quickRepliesOpen, setQuickRepliesOpen] = useState(false)
+  const [quickRepliesManagerOpen, setQuickRepliesManagerOpen] = useState(false)
   const [interveneLoading, setInterveneLoading] = useState(false)
   const [interveneError, setInterveneError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const { user } = useAuth()
+  const {
+    replies: quickReplies,
+    loading: quickRepliesLoading,
+    create: createQuickReply,
+    update: updateQuickReply,
+    remove: removeQuickReply,
+  } = useQuickReplies()
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -272,17 +284,41 @@ export function ChatPanel({
                       onClick={() => setQuickRepliesOpen(false)}
                     />
                     <div className="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50">
-                      {QUICK_REPLIES.map((qr) => (
+                      {quickRepliesLoading ? (
+                        <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Cargando…
+                        </div>
+                      ) : quickReplies.length === 0 ? (
+                        <div className="px-3 py-2.5 text-xs text-muted-foreground">
+                          Todavía no hay respuestas rápidas.
+                        </div>
+                      ) : (
+                        quickReplies.map((qr) => (
+                          <button
+                            key={qr.id}
+                            type="button"
+                            onClick={() => insertQuickReply(qr.content)}
+                            className="block w-full px-3 py-2.5 text-left transition-colors hover:bg-secondary"
+                          >
+                            <span className="block text-sm font-medium text-foreground">{qr.label}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{qr.content}</span>
+                          </button>
+                        ))
+                      )}
+                      {user?.role === 'admin' && (
                         <button
-                          key={qr.id}
                           type="button"
-                          onClick={() => insertQuickReply(qr.content)}
-                          className="block w-full px-3 py-2.5 text-left transition-colors hover:bg-secondary"
+                          onClick={() => {
+                            setQuickRepliesOpen(false)
+                            setQuickRepliesManagerOpen(true)
+                          }}
+                          className="flex w-full items-center gap-2 border-t border-border px-3 py-2.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                         >
-                          <span className="block text-sm font-medium text-foreground">{qr.label}</span>
-                          <span className="block truncate text-xs text-muted-foreground">{qr.content}</span>
+                          <Settings2 className="h-3.5 w-3.5" />
+                          Administrar respuestas rápidas
                         </button>
-                      ))}
+                      )}
                     </div>
                   </>
                 )}
@@ -322,6 +358,16 @@ export function ChatPanel({
         messages={messages}
         onClose={() => setCloseSaleOpen(false)}
         onSubmit={onCloseSale}
+      />
+
+      <QuickRepliesManagerModal
+        open={quickRepliesManagerOpen}
+        replies={quickReplies}
+        loading={quickRepliesLoading}
+        onClose={() => setQuickRepliesManagerOpen(false)}
+        onCreate={createQuickReply}
+        onUpdate={updateQuickReply}
+        onDelete={removeQuickReply}
       />
     </section>
   )

@@ -81,6 +81,11 @@ function isAdminOnlyApi(pathname: string, method: string): boolean {
   // /api/orders (crear la venta) NO cae acá, lo necesitan los asesores para
   // cerrar ventas desde el chat.
   if (/^\/api\/orders\/[^/]+$/.test(pathname)) return true
+  // Respuestas rápidas: cualquier asesor autenticado las puede LEER (las
+  // usa en el chat), pero crear/editar/borrar es admin-only — son
+  // contenido compartido por toda la empresa.
+  if (pathname === "/api/quick-replies" && method !== "GET") return true
+  if (/^\/api\/quick-replies\/[^/]+$/.test(pathname)) return true
   return false
 }
 

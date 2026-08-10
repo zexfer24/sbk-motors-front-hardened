@@ -10,8 +10,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import type { OrderDb } from '@/lib/types/order'
 
-export function OrdersView() {
-  const { orders, source, loading, error, updateStatus } = useOrders()
+export function OrdersView({ active = true }: { active?: boolean }) {
+  const { orders, source, loading, error, updateStatus } = useOrders(active)
   const [query, setQuery] = useState('')
   const [viewing, setViewing] = useState<OrderDb | null>(null)
 

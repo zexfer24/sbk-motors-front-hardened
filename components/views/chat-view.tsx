@@ -5,8 +5,10 @@ import { Bot } from 'lucide-react'
 import { WhatsappIcon } from '@/components/chat/whatsapp-icon'
 import { ConversationList } from '@/components/chat/conversation-list'
 import { ChatPanel } from '@/components/chat/chat-panel'
+import { NewConversationModal } from '@/components/chat/new-conversation-modal'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useChatwoot } from '@/lib/hooks/use-chatwoot'
+import type { StartConversationInput } from '@/lib/api/chatwoot'
 import { cn } from '@/lib/utils'
 
 interface ChatViewProps {
@@ -28,9 +30,11 @@ export function ChatView({ active }: ChatViewProps) {
     sendImage,
     toggle,
     closeSale,
+    startConversation,
   } = useChatwoot(active)
 
   const [showConversationOnMobile, setShowConversationOnMobile] = useState(false)
+  const [newChatOpen, setNewChatOpen] = useState(false)
 
   const totalUnread = useMemo(
     () => conversations.reduce((sum, c) => sum + c.unreadCount, 0),
@@ -40,6 +44,12 @@ export function ChatView({ active }: ChatViewProps) {
   function handleSelect(id: string) {
     selectConversation(id)
     setShowConversationOnMobile(true)
+  }
+
+  async function handleStartConversation(input: StartConversationInput) {
+    const result = await startConversation(input)
+    if ('ok' in result) setShowConversationOnMobile(true)
+    return result
   }
 
   if (loading) {
@@ -147,6 +157,7 @@ export function ChatView({ active }: ChatViewProps) {
             conversations={conversations}
             activeId={activeId}
             onSelect={handleSelect}
+            onNewChat={() => setNewChatOpen(true)}
           />
         </div>
 
@@ -179,6 +190,12 @@ export function ChatView({ active }: ChatViewProps) {
           )}
         </section>
       </div>
+
+      <NewConversationModal
+        open={newChatOpen}
+        onClose={() => setNewChatOpen(false)}
+        onStart={handleStartConversation}
+      />
     </div>
   )
 }

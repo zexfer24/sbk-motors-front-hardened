@@ -1,7 +1,7 @@
 'use client'
 
-import { Bot, Search, User, X } from 'lucide-react'
-import { useState } from 'react'
+import { Bot, MessageSquarePlus, Search, User, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChatwootConversation } from '@/lib/types/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,7 @@ interface ConversationListProps {
   conversations: ChatwootConversation[]
   activeId: string | null
   onSelect: (id: string) => void
+  onNewChat: () => void
 }
 
 type FilterKey = 'pending' | 'open_human' | 'open_ai' | 'resolved' | 'all'
@@ -44,9 +45,29 @@ export function ConversationList({
   conversations,
   activeId,
   onSelect,
+  onNewChat,
 }: ConversationListProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterKey>('all')
+  const filterBarRef = useRef<HTMLDivElement>(null)
+
+  // La barra de filtros solo se desplaza horizontalmente (overflow-x-auto)
+  // pero la rueda del mouse manda scroll vertical por defecto — sin esto,
+  // scrollear encima no hacía nada visible (no hay overflow-y) y el gesto
+  // se lo quedaba el contenedor padre. Se necesita addEventListener nativo
+  // con passive:false (no el onWheel de React, que es pasivo por defecto)
+  // para poder cancelar el scroll vertical y aplicarlo como horizontal.
+  useEffect(() => {
+    const el = filterBarRef.current
+    if (!el) return
+    function handleWheel(e: WheelEvent) {
+      if (e.deltaY === 0) return
+      el!.scrollLeft += e.deltaY
+      e.preventDefault()
+    }
+    el.addEventListener('wheel', handleWheel, { passive: false })
+    return () => el.removeEventListener('wheel', handleWheel)
+  }, [])
 
   const filtered = conversations.filter((c) => {
     const matchesSearch =
@@ -62,28 +83,39 @@ export function ConversationList({
   return (
     <aside className="flex h-full w-full flex-col">
       <div className="border-b border-border p-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar conversación..."
-            aria-label="Buscar conversación"
-            className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-8 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-shadow focus:border-primary/60 focus:ring-2 focus:ring-primary/30"
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
-              aria-label="Limpiar búsqueda"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar conversación..."
+              aria-label="Buscar conversación"
+              className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-8 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-shadow focus:border-primary/60 focus:ring-2 focus:ring-primary/30"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                aria-label="Limpiar búsqueda"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onNewChat}
+            title="Nuevo chat"
+            aria-label="Nuevo chat"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-transform active:scale-95"
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+          </button>
         </div>
 
-        <div className="mt-2 flex gap-1 overflow-x-auto">
+        <div ref={filterBarRef} className="mt-2 flex gap-1 overflow-x-auto">
           {FILTERS.map((f) => (
             <button
               key={f.key}

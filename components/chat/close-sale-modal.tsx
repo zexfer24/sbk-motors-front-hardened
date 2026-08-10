@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useId, useState } from 'react'
-import { Check, Handshake, ImageOff, Loader2, Minus, Plus, Search, Trash2, X } from 'lucide-react'
+import { Check, Handshake, ImageOff, Loader2, Minus, Plus, Search, Trash2, User, X } from 'lucide-react'
 import type { ChatwootConversation, ChatwootMessage } from '@/lib/types/chatwoot'
 import { PAYMENT_METHOD_LABELS, type NewOrderDb, type OrderItem, type PaymentMethod } from '@/lib/types/order'
 import { VENEZUELA_STATES } from '@/lib/venezuela-states'
 import { fetchInventory } from '@/lib/api/inventory'
+import { fetchCustomerByPhone, type CustomerLookup } from '@/lib/api/orders'
 import type { InventoryItemDb } from '@/lib/types/inventory'
 import { cn } from '@/lib/utils'
 import { bsToUsd, formatBs, formatUsd } from '@/lib/currency'
@@ -13,6 +14,55 @@ import { computeCasheaTotalUsd, sumItemsBs } from '@/lib/order-totals'
 import { useExchangeRate } from '@/lib/hooks/use-exchange-rate'
 
 const PAYMENT_METHODS = Object.entries(PAYMENT_METHOD_LABELS) as [PaymentMethod, string][]
+
+// El borrador se guarda por conversación (no globalmente) — así cada chat
+// mantiene lo que se escribió ahí, y cerrar el modal sin enviar ya no borra
+// nada. Vive en localStorage (no en memoria) para que sobreviva también a
+// cambiar de pestaña, recargar la página o volver más tarde. Solo se borra
+// cuando la venta se confirma con éxito.
+const DRAFT_KEY_PREFIX = 'sbk:close-sale-draft:'
+
+interface CloseSaleDraft {
+  customerName: string
+  customerPhone: string
+  customerCedula: string
+  state: string
+  city: string
+  address: string
+  paymentMethod: PaymentMethod
+  paymentMethodOther: string
+  shippingInfo: string
+  casheaOrderNumber: string
+  casheaInitialUsd: string
+  captureUrl: string | null
+  cart: OrderItem[]
+}
+
+function loadDraft(conversationId: string): CloseSaleDraft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY_PREFIX + conversationId)
+    return raw ? (JSON.parse(raw) as CloseSaleDraft) : null
+  } catch {
+    return null
+  }
+}
+
+function saveDraft(conversationId: string, draft: CloseSaleDraft): void {
+  try {
+    localStorage.setItem(DRAFT_KEY_PREFIX + conversationId, JSON.stringify(draft))
+  } catch {
+    // localStorage lleno o deshabilitado (modo privado, etc.) — el
+    // formulario sigue funcionando, solo no persiste entre sesiones.
+  }
+}
+
+function clearDraft(conversationId: string): void {
+  try {
+    localStorage.removeItem(DRAFT_KEY_PREFIX + conversationId)
+  } catch {
+    // ver comentario de saveDraft
+  }
+}
 
 interface CloseSaleModalProps {
   open: boolean
@@ -35,25 +85,96 @@ export function CloseSaleModal({
   // de verdad en Chatwoot, para que la venta quede atribuida a quien
   // realmente la cerró.
   const advisorName = conversation.assigneeName ?? ''
-  const [customerName, setCustomerName] = useState(conversation.contactName)
-  const [customerPhone, setCustomerPhone] = useState(conversation.phone)
-  const [customerCedula, setCustomerCedula] = useState('')
-  const [state, setState] = useState('')
-  const [city, setCity] = useState('')
-  const [address, setAddress] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pago_movil')
-  const [paymentMethodOther, setPaymentMethodOther] = useState('')
-  const [shippingInfo, setShippingInfo] = useState('')
-  const [casheaOrderNumber, setCasheaOrderNumber] = useState('')
-  const [casheaInitialUsd, setCasheaInitialUsd] = useState('')
-  const [captureUrl, setCaptureUrl] = useState<string | null>(null)
+  // `key={conversation.id}` en chat-panel.tsx remonta este componente al
+  // cambiar de chat, así que el inicializador corre una sola vez por
+  // conversación — el momento correcto para mirar si había un borrador
+  // guardado de una vez anterior en la que se cerró el modal sin enviar.
+  const [draftLoaded] = useState(() => loadDraft(conversation.id))
+  const [customerName, setCustomerName] = useState(draftLoaded?.customerName ?? conversation.contactName)
+  const [customerPhone, setCustomerPhone] = useState(draftLoaded?.customerPhone ?? conversation.phone)
+  const [customerCedula, setCustomerCedula] = useState(draftLoaded?.customerCedula ?? '')
+  const [state, setState] = useState(draftLoaded?.state ?? '')
+  const [city, setCity] = useState(draftLoaded?.city ?? '')
+  const [address, setAddress] = useState(draftLoaded?.address ?? '')
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(draftLoaded?.paymentMethod ?? 'pago_movil')
+  const [paymentMethodOther, setPaymentMethodOther] = useState(draftLoaded?.paymentMethodOther ?? '')
+  const [shippingInfo, setShippingInfo] = useState(draftLoaded?.shippingInfo ?? '')
+  const [casheaOrderNumber, setCasheaOrderNumber] = useState(draftLoaded?.casheaOrderNumber ?? '')
+  const [casheaInitialUsd, setCasheaInitialUsd] = useState(draftLoaded?.casheaInitialUsd ?? '')
+  const [captureUrl, setCaptureUrl] = useState<string | null>(draftLoaded?.captureUrl ?? null)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
   const [itemQuery, setItemQuery] = useState('')
   const [itemResults, setItemResults] = useState<InventoryItemDb[]>([])
   const [itemSearching, setItemSearching] = useState(false)
-  const [cart, setCart] = useState<OrderItem[]>([])
+  const [cart, setCart] = useState<OrderItem[]>(draftLoaded?.cart ?? [])
+
+  // Guarda el borrador en cada cambio — así cerrar el modal (X, fondo,
+  // "Cancelar") sin haber enviado la venta no pierde nada.
+  useEffect(() => {
+    saveDraft(conversation.id, {
+      customerName,
+      customerPhone,
+      customerCedula,
+      state,
+      city,
+      address,
+      paymentMethod,
+      paymentMethodOther,
+      shippingInfo,
+      casheaOrderNumber,
+      casheaInitialUsd,
+      captureUrl,
+      cart,
+    })
+  }, [
+    conversation.id,
+    customerName,
+    customerPhone,
+    customerCedula,
+    state,
+    city,
+    address,
+    paymentMethod,
+    paymentMethodOther,
+    shippingInfo,
+    casheaOrderNumber,
+    casheaInitialUsd,
+    captureUrl,
+    cart,
+  ])
+
+  // Si este número ya compró antes, se ofrece reusar sus datos (cédula,
+  // estado, ciudad, dirección) en vez de que el asesor los escriba de
+  // nuevo. No se autoaplica: puede ser otra persona usando el mismo
+  // teléfono, o querer enviar a una dirección distinta esta vez.
+  const [customerSuggestion, setCustomerSuggestion] = useState<CustomerLookup | null>(null)
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false)
+
+  useEffect(() => {
+    if (!conversation.phone) return
+    let cancelled = false
+    fetchCustomerByPhone(conversation.phone).then((result) => {
+      if (!cancelled) setCustomerSuggestion(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [conversation.phone])
+
+  function applySuggestion() {
+    if (!customerSuggestion) return
+    setCustomerName(customerSuggestion.customerName)
+    setCustomerCedula(customerSuggestion.customerCedula ?? '')
+    setState(customerSuggestion.state)
+    setCity(customerSuggestion.city)
+    setAddress(customerSuggestion.address)
+    setSuggestionDismissed(true)
+  }
+
+  const showSuggestion =
+    customerSuggestion !== null && !suggestionDismissed && !customerCedula.trim()
 
   useEffect(() => {
     if (!itemQuery.trim()) {
@@ -140,7 +261,8 @@ export function CloseSaleModal({
 
   function handleClose() {
     if (submitting) return
-    reset()
+    // A propósito NO se llama reset() aquí — cerrar sin enviar debe
+    // conservar lo escrito (queda en el estado y en el borrador guardado).
     onClose()
   }
 
@@ -225,6 +347,7 @@ export function CloseSaleModal({
       return
     }
 
+    clearDraft(conversation.id)
     reset()
     onClose()
   }
@@ -281,6 +404,36 @@ export function CloseSaleModal({
               </div>
             )}
           </div>
+
+          {showSuggestion && customerSuggestion && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3.5 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <User className="h-4 w-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-foreground">Cliente anterior encontrado</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {customerSuggestion.customerName} · {customerSuggestion.city}, {customerSuggestion.state}
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={applySuggestion}
+                  className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground transition-transform active:scale-95"
+                >
+                  Usar estos datos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSuggestionDismissed(true)}
+                  className="rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Ignorar
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor={`${formId}-name`} className="text-xs font-semibold text-muted-foreground">
