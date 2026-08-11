@@ -1,8 +1,9 @@
 'use client'
 
-import { Bot, MessageSquarePlus, Search, Tag, User, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Bot, Check, ChevronDown, Filter, MessageSquarePlus, Search, Tag, User, X } from 'lucide-react'
+import { useState } from 'react'
 import type { ChatwootConversation } from '@/lib/types/chatwoot'
+import type { ChatwootLabel } from '@/lib/api/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
 import { cn } from '@/lib/utils'
 
@@ -11,25 +12,24 @@ interface ConversationListProps {
   activeId: string | null
   onSelect: (id: string) => void
   onNewChat: () => void
+  labelCatalog: ChatwootLabel[]
+  labelCatalogLoading: boolean
 }
 
-type FilterKey = 'pending' | 'open_human' | 'open_ai' | 'resolved' | 'all'
+type StatusKey = 'pending' | 'open_human' | 'open_ai' | 'resolved'
 
-const FILTERS: { key: FilterKey; label: string }[] = [
+const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
   { key: 'pending', label: 'Sin contestar' },
   { key: 'open_human', label: 'Abiertas' },
   { key: 'open_ai', label: 'IA' },
   { key: 'resolved', label: 'Cerrados' },
-  { key: 'all', label: 'Todas' },
 ]
 
 // "Sin contestar" = tiene mensajes sin leer Y un asesor humano lo está
 // interviniendo (si lo sigue manejando Santiago/IA no cuenta como
 // "sin contestar": la IA ya se está haciendo cargo).
-function matchesFilter(c: ChatwootConversation, filter: FilterKey) {
-  switch (filter) {
-    case 'all':
-      return true
+function matchesStatus(c: ChatwootConversation, status: StatusKey) {
+  switch (status) {
     case 'pending':
       return c.handledBy === 'human' && c.unreadCount > 0
     case 'open_human':
@@ -46,39 +46,50 @@ export function ConversationList({
   activeId,
   onSelect,
   onNewChat,
+  labelCatalog,
+  labelCatalogLoading,
 }: ConversationListProps) {
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<FilterKey>('all')
-  const filterBarRef = useRef<HTMLDivElement>(null)
+  // null = "Todos" (default). Estado y categorías se combinan con AND —
+  // dentro de categorías, cualquiera de las seleccionadas cuenta (OR).
+  const [statusFilter, setStatusFilter] = useState<StatusKey | null>(null)
+  const [categoryFilters, setCategoryFilters] = useState<string[]>([])
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false)
 
-  // La barra de filtros solo se desplaza horizontalmente (overflow-x-auto)
-  // pero la rueda del mouse manda scroll vertical por defecto — sin esto,
-  // scrollear encima no hacía nada visible (no hay overflow-y) y el gesto
-  // se lo quedaba el contenedor padre. Se necesita addEventListener nativo
-  // con passive:false (no el onWheel de React, que es pasivo por defecto)
-  // para poder cancelar el scroll vertical y aplicarlo como horizontal.
-  useEffect(() => {
-    const el = filterBarRef.current
-    if (!el) return
-    function handleWheel(e: WheelEvent) {
-      if (e.deltaY === 0) return
-      el!.scrollLeft += e.deltaY
-      e.preventDefault()
-    }
-    el.addEventListener('wheel', handleWheel, { passive: false })
-    return () => el.removeEventListener('wheel', handleWheel)
-  }, [])
+  function toggleCategory(title: string) {
+    setCategoryFilters((prev) =>
+      prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title],
+    )
+  }
+
+  function clearFilters() {
+    setStatusFilter(null)
+    setCategoryFilters([])
+  }
 
   const filtered = conversations.filter((c) => {
     const matchesSearch =
       c.contactName.toLowerCase().includes(search.toLowerCase()) ||
       c.phone.includes(search)
-    return matchesSearch && matchesFilter(c, filter)
+    if (!matchesSearch) return false
+    if (statusFilter && !matchesStatus(c, statusFilter)) return false
+    if (categoryFilters.length > 0 && !categoryFilters.some((cat) => c.labels.includes(cat))) {
+      return false
+    }
+    return true
   })
 
   const unreadChatsCount = conversations.filter(
     (c) => c.handledBy === 'human' && c.unreadCount > 0,
   ).length
+
+  const activeFilterCount = (statusFilter ? 1 : 0) + categoryFilters.length
+  const filterButtonLabel =
+    activeFilterCount === 0
+      ? 'Todos'
+      : activeFilterCount === 1
+        ? (statusFilter ? STATUS_FILTERS.find((f) => f.key === statusFilter)?.label : categoryFilters[0]) ?? 'Filtros'
+        : `Filtros (${activeFilterCount})`
 
   return (
     <aside className="flex h-full w-full flex-col">
@@ -115,31 +126,127 @@ export function ConversationList({
           </button>
         </div>
 
-        <div ref={filterBarRef} className="mt-2 flex gap-1 overflow-x-auto">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setFilter(f.key)}
-              className={cn(
-                'shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-[0.65rem] font-medium uppercase tracking-wider transition-colors',
-                filter === f.key
-                  ? 'bg-primary/15 text-foreground'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {f.key === 'pending' ? (
-                <span className="inline-flex items-center gap-1">
-                  {f.label}
-                  <span className="rounded bg-background/60 px-1 py-0.5 text-[0.55rem] font-normal normal-case tracking-normal text-muted-foreground">
-                    ({unreadChatsCount} no leídos)
-                  </span>
-                </span>
-              ) : (
-                f.label
-              )}
-            </button>
-          ))}
+        <div className="relative mt-2">
+          <button
+            type="button"
+            onClick={() => setFilterMenuOpen((v) => !v)}
+            className={cn(
+              'flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[0.7rem] font-medium transition-colors',
+              activeFilterCount > 0
+                ? 'bg-primary/15 text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Filter className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1 truncate text-left">{filterButtonLabel}</span>
+            {unreadChatsCount > 0 && (
+              <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-unread px-1 font-mono text-[0.6rem] font-bold text-primary-foreground">
+                {unreadChatsCount}
+              </span>
+            )}
+            <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', filterMenuOpen && 'rotate-180')} />
+          </button>
+
+          {filterMenuOpen && (
+            <>
+              <button
+                type="button"
+                aria-label="Cerrar filtros"
+                className="fixed inset-0 z-40"
+                onClick={() => setFilterMenuOpen(false)}
+              />
+              <div className="absolute left-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50">
+                <div className="max-h-80 overflow-y-auto">
+                  <div className="border-b border-border px-3 py-2">
+                    <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Estado
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setStatusFilter(null)}
+                      className={cn(
+                        'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary',
+                        statusFilter === null ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {statusFilter === null && <Check className="h-3.5 w-3.5 text-primary" />}
+                      <span className={statusFilter === null ? '' : 'pl-[1.375rem]'}>Todos</span>
+                    </button>
+                    {STATUS_FILTERS.map((f) => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => setStatusFilter(f.key)}
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary',
+                          statusFilter === f.key ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {statusFilter === f.key && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                        <span className={cn('flex-1 truncate', statusFilter !== f.key && 'pl-[1.375rem]')}>
+                          {f.label}
+                        </span>
+                        {f.key === 'pending' && unreadChatsCount > 0 && (
+                          <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[0.6rem] font-normal text-muted-foreground">
+                            {unreadChatsCount}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="px-3 py-2">
+                    <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Categorías
+                    </p>
+                    {labelCatalogLoading ? (
+                      <p className="px-2 py-1.5 text-xs text-muted-foreground">Cargando…</p>
+                    ) : labelCatalog.length === 0 ? (
+                      <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                        Todavía no hay categorías creadas.
+                      </p>
+                    ) : (
+                      labelCatalog.map((l) => {
+                        const active = categoryFilters.includes(l.title)
+                        return (
+                          <button
+                            key={l.id}
+                            type="button"
+                            onClick={() => toggleCategory(l.title)}
+                            className={cn(
+                              'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary',
+                              active ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            {active ? (
+                              <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
+                            ) : (
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: l.color }}
+                              />
+                            )}
+                            <span className="flex-1 truncate">{l.title}</span>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="flex w-full items-center justify-center gap-1.5 border-t border-border px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Limpiar filtros
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 

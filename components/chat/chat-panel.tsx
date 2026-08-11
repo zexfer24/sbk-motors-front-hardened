@@ -25,8 +25,7 @@ import { LabelsManagerModal } from '@/components/chat/labels-manager-modal'
 import { avatarColor } from '@/lib/avatar-color'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { useQuickReplies } from '@/lib/hooks/use-quick-replies'
-import { useLabels } from '@/lib/hooks/use-labels'
-import { fetchAgents, type Agent } from '@/lib/api/chatwoot'
+import { fetchAgents, type Agent, type ChatwootLabel } from '@/lib/api/chatwoot'
 import { cn } from '@/lib/utils'
 
 // Alto máximo del compositor antes de que aparezca su propio scroll interno
@@ -69,6 +68,9 @@ interface ChatPanelProps {
   onToggleIntervene: () => Promise<{ error: string } | { ok: true }>
   onAssign: (agentId: number | null) => Promise<{ error: string } | { ok: true }>
   onSetLabels: (labels: string[]) => Promise<{ error: string } | { ok: true }>
+  labelCatalog: ChatwootLabel[]
+  labelCatalogLoading: boolean
+  onCreateLabel: (input: { title: string; color: string }) => Promise<ChatwootLabel | { error: string }>
   onCloseSale: (input: NewOrderDb) => Promise<{ error: string } | { ok: true }>
 }
 
@@ -85,6 +87,9 @@ export function ChatPanel({
   onToggleIntervene,
   onAssign,
   onSetLabels,
+  labelCatalog,
+  labelCatalogLoading,
+  onCreateLabel,
   onCloseSale,
 }: ChatPanelProps) {
   const [draft, setDraft] = useState('')
@@ -116,11 +121,6 @@ export function ChatPanel({
     update: updateQuickReply,
     remove: removeQuickReply,
   } = useQuickReplies()
-  const {
-    labels: labelCatalog,
-    loading: labelCatalogLoading,
-    create: createLabel,
-  } = useLabels()
 
   // Solo baja el scroll cuando cambia el ÚLTIMO mensaje (uno nuevo llegó o
   // se mandó) — si lo que cambió fue anteponer mensajes viejos al abrir
@@ -293,11 +293,7 @@ export function ChatPanel({
     fileInputRef.current?.click()
   }
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-
+  async function sendImageFile(file: File) {
     setImageError(null)
     setImageUploading(true)
     try {
@@ -307,6 +303,27 @@ export function ChatPanel({
     } finally {
       setImageUploading(false)
     }
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    await sendImageFile(file)
+  }
+
+  // Pegar una imagen copiada (captura de pantalla, "Copiar imagen" del
+  // navegador, etc.) manda directo por el mismo camino que adjuntar por el
+  // clip — sin esto, la única forma de mandar una imagen era guardarla a
+  // disco primero y elegirla con el picker de archivos.
+  function handleComposerPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
+      i.type.startsWith('image/'),
+    )
+    if (!item) return
+    e.preventDefault()
+    const file = item.getAsFile()
+    if (file) sendImageFile(file)
   }
 
   function insertQuickReply(content: string) {
@@ -726,6 +743,7 @@ export function ChatPanel({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={handleComposerKeyDown}
+                onPaste={handleComposerPaste}
                 disabled={!withinWhatsappWindow}
                 placeholder={
                   withinWhatsappWindow
@@ -789,7 +807,7 @@ export function ChatPanel({
         labels={labelCatalog}
         loading={labelCatalogLoading}
         onClose={() => setLabelsManagerOpen(false)}
-        onCreate={createLabel}
+        onCreate={onCreateLabel}
       />
     </section>
   )

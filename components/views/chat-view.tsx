@@ -8,6 +8,7 @@ import { ChatPanel } from '@/components/chat/chat-panel'
 import { NewConversationModal } from '@/components/chat/new-conversation-modal'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useChatwoot } from '@/lib/hooks/use-chatwoot'
+import { useLabels } from '@/lib/hooks/use-labels'
 import type { StartConversationInput } from '@/lib/api/chatwoot'
 import { cn } from '@/lib/utils'
 
@@ -37,6 +38,17 @@ export function ChatView({ active }: ChatViewProps) {
     closeSale,
     startConversation,
   } = useChatwoot(active)
+
+  // Catálogo de categorías (labels) — se carga UNA vez acá y se pasa a
+  // ConversationList y ChatPanel, en vez de que cada uno llame a
+  // useLabels() por su cuenta: dos instancias separadas del hook tendrían
+  // cada una su propio estado, así que crear una categoría desde el chat
+  // no se reflejaría en el selector de filtros de la lista (y viceversa).
+  const {
+    labels: labelCatalog,
+    loading: labelCatalogLoading,
+    create: createLabel,
+  } = useLabels()
 
   const [showConversationOnMobile, setShowConversationOnMobile] = useState(false)
   const [newChatOpen, setNewChatOpen] = useState(false)
@@ -163,6 +175,8 @@ export function ChatView({ active }: ChatViewProps) {
             activeId={activeId}
             onSelect={handleSelect}
             onNewChat={() => setNewChatOpen(true)}
+            labelCatalog={labelCatalog}
+            labelCatalogLoading={labelCatalogLoading}
           />
         </div>
 
@@ -186,6 +200,9 @@ export function ChatView({ active }: ChatViewProps) {
               onToggleIntervene={toggle}
               onAssign={assign}
               onSetLabels={setLabels}
+              labelCatalog={labelCatalog}
+              labelCatalogLoading={labelCatalogLoading}
+              onCreateLabel={createLabel}
               onCloseSale={closeSale}
             />
           ) : (

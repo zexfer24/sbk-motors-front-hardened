@@ -84,6 +84,44 @@ function dedupeByPhone(conversations: MappedConversation[]): MappedConversation[
   return [...latestByKey.values(), ...withoutPhone]
 }
 
+// Techo de seguridad para el loop de páginas de abajo — a 25 por página
+// (el tamaño que usa Chatwoot) son ~1000 conversaciones. De sobra para el
+// volumen actual; si algún día se llega a este techo, la solución ya no es
+// subir el número sino pedirle a Chatwoot un filtro por fecha en vez de
+// traer todo el historial completo en cada carga.
+const CONVERSATIONS_PAGE_SAFETY_CAP = 40
+
+// Chatwoot pagina /conversations (¿25 por página?, no documentado como
+// estable) — pedir solo la página 1 significa que cualquier chat que no
+// esté entre los más recientemente activos no vuelve nunca, ni siquiera
+// buscándolo por nombre/teléfono (la búsqueda del front solo mira lo que ya
+// está en memoria). Se pagina hasta que una página vuelve vacía, en vez de
+// asumir un tamaño de página fijo, para no depender de un detalle interno
+// de Chatwoot que se nos puede escapar. `all_count` (si Chatwoot lo manda)
+// solo se usa como atajo para cortar antes si ya se juntó todo — nunca para
+// calcular cuántas páginas pedir.
+async function fetchAllConversationsRaw(): Promise<Record<string, unknown>[]> {
+  const all: Record<string, unknown>[] = []
+  let expectedTotal: number | null = null
+
+  for (let page = 1; page <= CONVERSATIONS_PAGE_SAFETY_CAP; page++) {
+    const data = await chatwootFetch<{
+      data: { payload: Record<string, unknown>[]; meta?: { all_count?: number } }
+    }>(`/conversations?status=all&page=${page}`, { cache: "no-store" })
+
+    const batch = data.data.payload
+    if (batch.length === 0) break
+    all.push(...batch)
+
+    if (expectedTotal === null && typeof data.data.meta?.all_count === "number") {
+      expectedTotal = data.data.meta.all_count
+    }
+    if (expectedTotal !== null && all.length >= expectedTotal) break
+  }
+
+  return all
+}
+
 // Pide las conversaciones a Chatwoot y sincroniza sus contactos en el CRM
 // (por teléfono). Devuelve `ok: false` si la API no responde — así el
 // front puede distinguir "no configurado" de "configurado pero caído".
@@ -94,16 +132,13 @@ export async function fetchAndSyncConversations(): Promise<
     // status=all — por defecto Chatwoot solo devuelve conversaciones
     // "open"; sin esto, una conversación resuelta (p. ej. tras cerrar una
     // venta) desaparecería por completo en vez de pasar a "Cerrados".
-    const [data, inboxes] = await Promise.all([
-      chatwootFetch<{ data: { payload: Record<string, unknown>[] } }>(
-        "/conversations?status=all",
-        { cache: "no-store" },
-      ),
+    const [payload, inboxes] = await Promise.all([
+      fetchAllConversationsRaw(),
       listInboxes().catch(() => []),
     ])
     const inboxNames = new Map(inboxes.map((ib) => [ib.id, ib.name]))
     const conversations = dedupeByPhone(
-      data.data.payload.map((raw) => mapChatwootConversation(raw, inboxNames)),
+      payload.map((raw) => mapChatwootConversation(raw, inboxNames)),
     )
 
     for (const c of conversations) {

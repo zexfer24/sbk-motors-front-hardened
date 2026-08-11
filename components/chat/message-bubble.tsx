@@ -2,9 +2,60 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Bot, Check, CheckCheck, File, Paperclip, User, X } from 'lucide-react'
+import { Bot, Check, CheckCheck, Download, File, Paperclip, Play, User, X } from 'lucide-react'
 import type { ChatwootAttachment, ChatwootMessage } from '@/lib/types/chatwoot'
 import { cn } from '@/lib/utils'
+
+// Fuerza la descarga real del archivo en vez de dejar que el navegador solo
+// lo abra/muestre (que es lo único que hace un <a href> normal con un
+// adjunto de otro origen — el atributo `download` HTML se ignora entre
+// orígenes distintos). Si el adjunto no se puede leer por fetch (CORS,
+// caído, lo que sea), se degrada a abrirlo en pestaña nueva — al menos
+// ahí se puede "Guardar como" a mano.
+async function downloadAttachment(attachment: ChatwootAttachment) {
+  const filename = attachment.fileUrl.split('/').pop()?.split('?')[0] || 'adjunto'
+  try {
+    const res = await fetch(attachment.fileUrl)
+    if (!res.ok) throw new Error('descarga_fallida')
+    const blob = await res.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(objectUrl)
+  } catch {
+    window.open(attachment.fileUrl, '_blank', 'noopener,noreferrer')
+  }
+}
+
+function DownloadButton({
+  attachment,
+  className,
+}: {
+  attachment: ChatwootAttachment
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        downloadAttachment(attachment)
+      }}
+      aria-label="Descargar adjunto"
+      title="Descargar"
+      className={cn(
+        'flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white/90 backdrop-blur-sm transition-colors hover:bg-black/70 hover:text-white',
+        className,
+      )}
+    >
+      <Download className="h-3.5 w-3.5" />
+    </button>
+  )
+}
 
 const senderLabels: Record<string, string> = {
   customer: '',
@@ -91,14 +142,17 @@ export function MessageBubble({ message }: { message: ChatwootMessage }) {
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4"
           onClick={() => setLightbox(null)}
         >
-          <button
-            type="button"
-            onClick={() => setLightbox(null)}
-            className="absolute right-4 top-4 rounded-full bg-black/40 p-2 text-white/80 hover:text-white"
-            aria-label="Cerrar"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="absolute right-4 top-4 flex items-center gap-2">
+            <DownloadButton attachment={lightbox} className="h-9 w-9 bg-black/40 hover:bg-black/60" />
+            <button
+              type="button"
+              onClick={() => setLightbox(null)}
+              className="rounded-full bg-black/40 p-2 text-white/80 hover:text-white"
+              aria-label="Cerrar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
           {lightbox.kind === 'image' ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -129,49 +183,73 @@ function AttachmentPreview({
   attachment: ChatwootAttachment
   onExpand: () => void
 }) {
+  // Chatwoot manda una miniatura liviana aparte del archivo completo — sin
+  // esto, cada preview inline del chat descargaba la imagen a resolución
+  // completa (varios MB si viene de una cámara de celular), lo que en una
+  // conexión lenta se sentía como "no carga". Si la miniatura falla, cae a
+  // la imagen completa en vez de quedarse rota.
+  const [thumbFailed, setThumbFailed] = useState(false)
+
   if (attachment.kind === 'image') {
+    const previewSrc = attachment.thumbUrl && !thumbFailed ? attachment.thumbUrl : attachment.fileUrl
     return (
-      <button
-        type="button"
-        onClick={onExpand}
-        className="block overflow-hidden rounded-lg border border-border transition-opacity hover:opacity-90"
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={attachment.fileUrl}
-          alt="Imagen adjunta"
-          loading="lazy"
-          className="max-h-56 w-auto max-w-[220px] object-cover"
-        />
-      </button>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={onExpand}
+          className="block overflow-hidden rounded-lg border border-border transition-opacity hover:opacity-90"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewSrc}
+            alt="Imagen adjunta"
+            loading="lazy"
+            onError={() => setThumbFailed(true)}
+            className="max-h-56 w-auto max-w-[220px] object-cover"
+          />
+        </button>
+        <DownloadButton attachment={attachment} className="absolute right-1.5 top-1.5" />
+      </div>
     )
   }
 
   if (attachment.kind === 'video') {
     return (
-      <button
-        type="button"
-        onClick={onExpand}
-        className="block max-w-[240px] overflow-hidden rounded-lg border border-border"
-      >
-        <video
-          src={attachment.fileUrl}
-          className="max-h-56 w-full object-cover"
-          preload="metadata"
-          muted
-        />
-      </button>
+      <div className="relative max-w-[240px]">
+        <button
+          type="button"
+          onClick={onExpand}
+          className="block overflow-hidden rounded-lg border border-border"
+        >
+          <video
+            src={attachment.fileUrl}
+            className="max-h-56 w-full object-cover"
+            preload="metadata"
+            muted
+          />
+          {/* preload="metadata" no siempre pinta un frame visible antes de
+              reproducir — sin este ícono, un video sin frame se ve como un
+              recuadro negro vacío, indistinguible de uno roto. */}
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white">
+              <Play className="h-4 w-4 translate-x-0.5" fill="currentColor" />
+            </span>
+          </span>
+        </button>
+        <DownloadButton attachment={attachment} className="absolute right-1.5 top-1.5" />
+      </div>
     )
   }
 
   if (attachment.kind === 'audio') {
     return (
-      <audio
-        src={attachment.fileUrl}
-        controls
-        preload="metadata"
-        className="h-10 w-full min-w-[220px] max-w-[260px]"
-      />
+      <div className="flex w-full min-w-[220px] max-w-[260px] items-center gap-1.5">
+        <audio src={attachment.fileUrl} controls preload="metadata" className="h-10 flex-1" />
+        <DownloadButton
+          attachment={attachment}
+          className="static h-8 w-8 shrink-0 bg-secondary text-muted-foreground hover:bg-secondary hover:text-foreground"
+        />
+      </div>
     )
   }
 
