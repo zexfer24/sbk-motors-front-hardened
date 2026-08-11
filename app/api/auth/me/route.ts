@@ -33,5 +33,9 @@ export async function GET() {
   }
 
   const role = data.user.app_metadata?.role === "admin" ? "admin" : "asesor"
-  return NextResponse.json({ email: data.user.email, role })
+  const chatwootAgentId =
+    typeof data.user.app_metadata?.chatwoot_agent_id === "number"
+      ? data.user.app_metadata.chatwoot_agent_id
+      : null
+  return NextResponse.json({ email: data.user.email, role, chatwootAgentId })
 }

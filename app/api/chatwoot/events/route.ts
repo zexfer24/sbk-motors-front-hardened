@@ -4,12 +4,12 @@
 // conexión en vez de preguntar cada 5-6s si hay algo nuevo.
 // ============================================================================
 // No lleva el contenido del mensaje ni datos del cliente — solo "algo cambió
-// en la conversación X, vuelve a pedirla". La autorización real (quién
-// puede ver qué conversación) sigue viviendo donde ya vivía: en
-// /api/chatwoot/conversations (filtra la lista) y en guardConversationRoute
-// (401/403 al pedir mensajes de una conversación ajena). Mandar el aviso a
-// todo el que esté conectado no expone nada que esas rutas no vuelvan a
-// verificar por su cuenta.
+// en la conversación X, vuelve a pedirla". Toda la conversación es visible
+// para cualquiera del equipo (lectura abierta a propósito, ver
+// lib/chatwoot/authz.ts), así que mandar el aviso a todo el que esté
+// conectado no expone nada nuevo; lo que sigue protegido aparte es poder
+// ESCRIBIR en una conversación ajena (guardConversationWrite, 403 al
+// intentarlo).
 // ============================================================================
 
 import { subscribeToChatwootEvents, type ChatwootBusEvent } from "@/lib/chatwoot/event-bus"

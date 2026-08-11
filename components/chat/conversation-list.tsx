@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, MessageSquarePlus, Search, User, X } from 'lucide-react'
+import { Bot, MessageSquarePlus, Search, Tag, User, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ChatwootConversation } from '@/lib/types/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
@@ -203,7 +203,7 @@ export function ConversationList({
                       )}
                     </p>
                     {c.unreadCount > 0 && (
-                      <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 font-mono text-[0.6rem] font-bold text-primary-foreground">
+                      <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-unread px-1 font-mono text-[0.6rem] font-bold text-primary-foreground">
                         {c.unreadCount}
                       </span>
                     )}
@@ -227,6 +227,15 @@ export function ConversationList({
                     {c.inboxName && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
                         {c.inboxName}
+                      </span>
+                    )}
+                    {c.labels.length > 0 && (
+                      <span className="inline-flex items-center gap-1 truncate rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
+                        <Tag className="h-2.5 w-2.5 shrink-0" />
+                        <span className="truncate">
+                          {c.labels.slice(0, 2).join(', ')}
+                          {c.labels.length > 2 ? ` +${c.labels.length - 2}` : ''}
+                        </span>
                       </span>
                     )}
                   </div>

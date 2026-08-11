@@ -1,17 +1,22 @@
 import type { ChatwootConversation, ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
 
+// El store de demo no tiene un concepto real de "dueño" ni de catálogo de
+// etiquetas de Chatwoot detrás — `canWrite`/`labels` se agregan siempre al
+// leer, en vez de guardarse en cada conversación semilla.
+type DemoConversation = Omit<ChatwootConversation, "canWrite" | "labels">
+
 const globalForStore = globalThis as unknown as {
-  __chatwootStore?: ChatwootConversation[]
+  __chatwootStore?: DemoConversation[]
 }
 
-function getStore(): ChatwootConversation[] {
+function getStore(): DemoConversation[] {
   if (!globalForStore.__chatwootStore) {
     globalForStore.__chatwootStore = seedConversations()
   }
   return globalForStore.__chatwootStore
 }
 
-function seedConversations(): ChatwootConversation[] {
+function seedConversations(): DemoConversation[] {
   return [
     {
       id: "demo-c1",
@@ -247,15 +252,18 @@ function seedConversations(): ChatwootConversation[] {
 }
 
 export function listConversations(): ChatwootConversation[] {
-  return [...getStore()].sort((a, b) => {
-    const aTime = a.lastMessageAt ?? ""
-    const bTime = b.lastMessageAt ?? ""
-    return aTime < bTime ? 1 : -1
-  })
+  return [...getStore()]
+    .sort((a, b) => {
+      const aTime = a.lastMessageAt ?? ""
+      const bTime = b.lastMessageAt ?? ""
+      return aTime < bTime ? 1 : -1
+    })
+    .map((c) => ({ ...c, canWrite: true, labels: [] }))
 }
 
 export function getConversation(id: string): ChatwootConversation | null {
-  return getStore().find((c) => c.id === id) ?? null
+  const conv = getStore().find((c) => c.id === id)
+  return conv ? { ...conv, canWrite: true, labels: [] } : null
 }
 
 export function addMessage(

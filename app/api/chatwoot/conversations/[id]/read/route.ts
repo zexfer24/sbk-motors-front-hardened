@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { markAsRead } from "@/lib/api/chatwoot-demo-store"
 import { chatwootFetch, getChatwootConfig } from "@/lib/chatwoot/client"
-import { guardConversationRoute } from "@/lib/chatwoot/authz"
+import { guardConversationRead } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -10,9 +10,13 @@ type RouteContext = { params: Promise<{ id: string }> }
 // solo lo marcáramos localmente, el contador real de Chatwoot seguiría
 // mostrando los mismos mensajes sin leer la próxima vez que se recargue
 // la página o se salga y vuelva a entrar a la pestaña de WhatsApp.
+//
+// Es una acción de LECTURA (no manda nada al cliente), así que cualquiera
+// del equipo puede marcar como visto cualquier conversación — coherente con
+// que todos los chats sean visibles siempre.
 export async function POST(request: Request, { params }: RouteContext) {
   const { id } = await params
-  const denied = await guardConversationRoute(request, id)
+  const denied = await guardConversationRead(request, id)
   if (denied) return denied
 
   const config = getChatwootConfig()

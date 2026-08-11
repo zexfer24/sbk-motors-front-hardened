@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
+  assignConversation,
   closeConversation,
   fetchConversations,
   fetchMessages,
   markConversationRead,
   sendImageMessage,
   sendMessage,
+  setConversationLabels,
   startNewConversation,
   toggleIntervention,
   type StartConversationInput,
@@ -258,6 +260,48 @@ export function useChatwoot(active: boolean = true) {
     }
   }, [activeId, conversations])
 
+  // Asignación directa por un supervisor — a diferencia de `toggle`, no
+  // asigna al propio agente de quien llama sino al que se elija (o
+  // desasigna con `null`). El servidor recalcula `canWrite` en el próximo
+  // `loadConversations`, así que no hace falta tocarlo a mano acá.
+  const assign = useCallback(
+    async (agentId: number | null): Promise<{ error: string } | { ok: true }> => {
+      if (!activeId) return { error: "No hay conversación seleccionada." }
+      try {
+        await assignConversation(activeId, agentId)
+        await loadConversations({ silent: true })
+        return { ok: true }
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : "No se pudo asignar la conversación.",
+        }
+      }
+    },
+    [activeId, loadConversations],
+  )
+
+  // Reemplaza el set de etiquetas de la conversación activa — igual que
+  // `assign`, actualiza el estado local al toque (optimista) y confirma
+  // contra el servidor; si falla, un `loadConversations` normal en el
+  // próximo evento/polling corrige cualquier desfase.
+  const setLabels = useCallback(
+    async (labels: string[]): Promise<{ error: string } | { ok: true }> => {
+      if (!activeId) return { error: "No hay conversación seleccionada." }
+      const id = activeId
+      setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, labels } : c)))
+      try {
+        await setConversationLabels(id, labels)
+        return { ok: true }
+      } catch (err) {
+        await loadConversations({ silent: true })
+        return {
+          error: err instanceof Error ? err.message : "No se pudieron guardar las etiquetas.",
+        }
+      }
+    },
+    [activeId, loadConversations],
+  )
+
   const closeSale = useCallback(
     async (input: NewOrderDb): Promise<{ error: string } | { ok: true }> => {
       const result = await addOrder(input)
@@ -317,6 +361,8 @@ export function useChatwoot(active: boolean = true) {
     send,
     sendImage,
     toggle,
+    assign,
+    setLabels,
     closeSale,
     startConversation,
     reload: loadConversations,

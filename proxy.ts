@@ -86,6 +86,16 @@ function isAdminOnlyApi(pathname: string, method: string): boolean {
   // contenido compartido por toda la empresa.
   if (pathname === "/api/quick-replies" && method !== "GET") return true
   if (/^\/api\/quick-replies\/[^/]+$/.test(pathname)) return true
+  // Asignar un chat a otro asesor y ver la lista de asesores son acciones
+  // de supervisor — el asesor común solo puede "tomar" un chat vía
+  // /intervene (con su propia regla, ver ese route.ts).
+  if (/^\/api\/chatwoot\/conversations\/[^/]+\/assign$/.test(pathname)) return true
+  if (pathname === "/api/agents") return true
+  // Categorías (labels): cualquiera puede leer el catálogo y
+  // aplicar/quitar etiquetas de una conversación (con su propio límite en
+  // guardConversationWrite), pero crear una categoría nueva es admin-only —
+  // es contenido compartido por toda la empresa, igual que quick-replies.
+  if (pathname === "/api/chatwoot/labels" && method !== "GET") return true
   return false
 }
 

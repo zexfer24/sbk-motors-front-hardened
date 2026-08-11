@@ -44,6 +44,7 @@ export function mapChatwootConversation(
     online: false,
     typing: false,
     messages: [],
+    labels: Array.isArray(raw.labels) ? (raw.labels as unknown[]).map(String) : [],
   }
 }
 

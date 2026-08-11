@@ -41,6 +41,14 @@ export interface ChatwootConversation {
   online: boolean
   typing: boolean
   messages: ChatwootMessage[]
+  /**
+   * Derivado en el servidor (nunca del cliente): admin siempre true; asesor
+   * solo si `assigneeId` es el suyo. Todo el equipo puede LEER cualquier
+   * conversación — esto solo gobierna si el compositor está habilitado.
+   */
+  canWrite: boolean
+  /** Títulos de las etiquetas (labels) de Chatwoot asignadas a esta conversación. */
+  labels: string[]
 }
 
 export type NewMessageInput = {

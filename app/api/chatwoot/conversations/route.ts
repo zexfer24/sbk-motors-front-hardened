@@ -9,32 +9,30 @@ import { serverError } from "@/lib/api-errors"
 export async function GET(request: Request) {
   const config = getChatwootConfig()
 
+  // Todo el equipo ve TODOS los chats siempre (pedido del negocio: cobertura
+  // y colaboración, cualquiera puede ver qué está pasando en cualquier
+  // conversación). Lo que sí queda restringido es quién puede ESCRIBIR: se
+  // deriva acá un `canWrite` por conversación — admin siempre, asesor solo
+  // en la suya — para que la UI no reimplemente la regla (ver también
+  // lib/chatwoot/authz.ts, que aplica la misma regla del lado servidor por
+  // si alguien le pega directo a /messages saltándose la UI).
+  const role = request.headers.get(USER_ROLE_HEADER)
+  const agentIdHeader = request.headers.get(CHATWOOT_AGENT_ID_HEADER)
+  const agentId =
+    agentIdHeader && /^[0-9]{1,18}$/.test(agentIdHeader) ? Number(agentIdHeader) : null
+  const canWrite = (assigneeId: number | null) =>
+    role === "admin" || (agentId !== null && assigneeId === agentId)
+
   if (config) {
     const result = await fetchAndSyncConversations()
     if (!result.ok) {
       return NextResponse.json({ error: "error_chatwoot" }, { status: 502 })
     }
 
-    // Un asesor solo necesita ver sus propios chats y los que todavía no
-    // tienen dueño (para poder tomarlos) — no los de sus compañeros. Los
-    // admin (dueños/supervisor) siguen viendo todo, como antes.
-    //
-    // Falla CERRADO: antes la condición era `role === "asesor" && agentId
-    // !== null`, así que un asesor sin `chatwoot_agent_id` vinculado caía al
-    // `else` y veía TODAS las conversaciones de la empresa. Ahora solo se
-    // ensancha la vista para admin; cualquier otro caso filtra, y un asesor
-    // sin agente vinculado ve únicamente las no asignadas.
-    const role = request.headers.get(USER_ROLE_HEADER)
-    const agentIdHeader = request.headers.get(CHATWOOT_AGENT_ID_HEADER)
-    const agentId =
-      agentIdHeader && /^[0-9]{1,18}$/.test(agentIdHeader) ? Number(agentIdHeader) : null
-
-    const conversations =
-      role === "admin"
-        ? result.conversations
-        : result.conversations.filter(
-            (c) => c.assigneeId === null || (agentId !== null && c.assigneeId === agentId),
-          )
+    const conversations = result.conversations.map((c) => ({
+      ...c,
+      canWrite: canWrite(c.assigneeId),
+    }))
 
     return NextResponse.json({ conversations, source: "chatwoot" })
   }

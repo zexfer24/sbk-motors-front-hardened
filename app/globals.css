@@ -43,6 +43,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-metal: var(--metal);
+  --color-unread: var(--unread);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -78,7 +79,10 @@
   --secondary-foreground: oklch(0.96 0.004 270);
 
   --muted: oklch(0.22 0.01 25);
-  --muted-foreground: oklch(0.66 0.012 25);
+  /* 0.66 → 0.70: sobre --secondary (L 0.24) el texto secundario (nombre de
+     buzón, hora del mensaje, placeholders) quedaba por debajo de 4.5:1 de
+     contraste — el mínimo de WCAG AA para texto chico. */
+  --muted-foreground: oklch(0.7 0.012 25);
 
   --accent: oklch(0.58 0.22 25);
   --accent-foreground: oklch(0.98 0.01 25);
@@ -87,6 +91,10 @@
 
   --success: oklch(0.72 0.17 150);
   --warning: oklch(0.78 0.16 75);
+  /* Verde distinto del de --success (que ya significa "lo maneja la IA")
+     — más frío/esmeralda (hue 165 vs 150) y más saturado, para que un chat
+     sin leer se distinga del badge IA a simple vista incluso lado a lado. */
+  --unread: oklch(0.7 0.19 165);
   --metal: oklch(0.42 0.012 260);
 
   --border: oklch(0.3 0.012 25 / 70%);

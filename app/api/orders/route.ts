@@ -6,7 +6,7 @@ import { getTodayRate } from "@/lib/bcv-rate"
 import { computeCasheaTotalUsd, computeOrderTotals } from "@/lib/order-totals"
 import type { OrderItem, PaymentMethod } from "@/lib/types/order"
 import { USER_EMAIL_HEADER } from "@/lib/auth-headers"
-import { authorizeConversation } from "@/lib/chatwoot/authz"
+import { authorizeConversationWrite } from "@/lib/chatwoot/authz"
 
 // Único punto de entrada que el navegador conoce (/api/orders). Habla
 // directo con Supabase (tabla orders) si las credenciales están
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
   }
   // Autorización sobre la conversación: cerrar una venta colgada del chat de
   // otro asesor era posible con solo cambiar `conversationId`.
-  const authz = await authorizeConversation(request, conversationId.trim())
+  const authz = await authorizeConversationWrite(request, conversationId.trim())
   if (!authz.ok) return authz.response
 
   // El nombre del asesor lo deriva el servidor del asignado en Chatwoot —

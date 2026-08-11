@@ -7,6 +7,7 @@ export type Role = "admin" | "asesor"
 export interface AuthUser {
   email: string
   role: Role
+  chatwootAgentId: number | null
 }
 
 // Quién está logueado, según /api/auth/me — el middleware ya garantiza que

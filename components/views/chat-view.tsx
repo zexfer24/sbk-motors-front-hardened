@@ -32,6 +32,8 @@ export function ChatView({ active }: ChatViewProps) {
     send,
     sendImage,
     toggle,
+    assign,
+    setLabels,
     closeSale,
     startConversation,
   } = useChatwoot(active)
@@ -182,6 +184,8 @@ export function ChatView({ active }: ChatViewProps) {
               onSend={(text) => send({ content: text, messageType: 'outgoing' })}
               onSendImage={sendImage}
               onToggleIntervene={toggle}
+              onAssign={assign}
+              onSetLabels={setLabels}
               onCloseSale={closeSale}
             />
           ) : (

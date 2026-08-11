@@ -2,14 +2,15 @@ import { NextResponse } from "next/server"
 import { getConversation, addMessage } from "@/lib/api/chatwoot-demo-store"
 import { getChatwootConfig, chatwootFetch, chatwootFetchForm } from "@/lib/chatwoot/client"
 import type { NewMessageInput } from "@/lib/types/chatwoot"
-import { guardConversationRoute } from "@/lib/chatwoot/authz"
+import { guardConversationRead, guardConversationWrite } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
 
 export async function GET(request: Request, { params }: RouteContext) {
   const { id } = await params
-  // Leer el historial de un chat ajeno era posible con solo iterar IDs.
-  const denied = await guardConversationRoute(request, id)
+  // Leer el historial es libre para todo el equipo — solo se valida que el
+  // id sea real (ver lib/chatwoot/authz.ts).
+  const denied = await guardConversationRead(request, id)
   if (denied) return denied
 
   // Chatwoot solo devuelve la última tanda de mensajes (por defecto, sin
@@ -48,9 +49,11 @@ export async function GET(request: Request, { params }: RouteContext) {
 
 export async function POST(request: Request, { params }: RouteContext) {
   const { id } = await params
-  // Sin esto, cualquier asesor podía escribirle a cualquier cliente en
-  // nombre del negocio (message_type: "outgoing").
-  const denied = await guardConversationRoute(request, id)
+  // Escribir queda restringido a quien la tiene asignada (o al admin,
+  // siempre) — sin esto, cualquiera podía escribirle a cualquier cliente en
+  // nombre del negocio (message_type: "outgoing"), incluso en un chat de
+  // otro asesor.
+  const denied = await guardConversationWrite(request, id)
   if (denied) return denied
 
   const contentType = request.headers.get("content-type") ?? ""
@@ -153,8 +156,21 @@ function mapChatwootMessage(raw: Record<string, unknown>) {
       ? new Date((raw.created_at as number) * 1000).toISOString()
       : new Date().toISOString(),
     attachments: rawAttachments.map(mapChatwootAttachment),
-    status: "delivered",
+    status: mapMessageStatus(raw.status),
   }
+}
+
+const KNOWN_STATUSES = new Set(["sent", "delivered", "read"])
+
+// Antes quedaba fijo en "delivered" para TODO mensaje saliente, así que un
+// mensaje recién mandado y uno que el cliente ya leyó se veían con el mismo
+// ✓✓ gris. Chatwoot sí trae el estado real acá, y lo mantiene al día vía el
+// webhook `message_updated` (ver app/api/chatwoot/webhook) — cuando cambia,
+// use-chatwoot.ts ya recarga los mensajes de la conversación activa, así que
+// no hace falta tocar nada más para que el check se actualice solo.
+function mapMessageStatus(raw: unknown): "sent" | "delivered" | "read" {
+  const value = String(raw ?? "")
+  return KNOWN_STATUSES.has(value) ? (value as "sent" | "delivered" | "read") : "sent"
 }
 
 function mapChatwootAttachment(raw: Record<string, unknown>) {

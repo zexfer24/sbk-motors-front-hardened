@@ -1,39 +1,54 @@
 import { NextResponse } from "next/server"
 import { getConversation } from "@/lib/api/chatwoot-demo-store"
 import { chatwootFetch, getChatwootAgentId, getChatwootConfig } from "@/lib/chatwoot/client"
-import { CHATWOOT_AGENT_ID_HEADER } from "@/lib/auth-headers"
-import { guardConversationRoute } from "@/lib/chatwoot/authz"
+import {
+  authorizeConversationRead,
+  callerAgentId as getCallerAgentId,
+  callerIsAdmin,
+} from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
 
+// Regla propia, distinta de guardConversationWrite: tomar un chat SIN
+// asignar sigue abierto a cualquier asesor (ese es el caso de uso de
+// "Intervenir"). Solo se bloquea robarle el chat a un compañero (asignado a
+// otro) o soltar el control de un chat que no es tuyo — en ambos casos el
+// admin puede siempre.
 export async function POST(request: Request, { params }: RouteContext) {
   const { id } = await params
-  // Reasignar el chat de otro (robarlo o dejarlo huérfano) era posible sin
-  // ninguna comprobación. Las conversaciones sin asignar siguen siendo
-  // tomables por cualquiera — eso es el caso de uso legítimo de "Intervenir".
-  const denied = await guardConversationRoute(request, id)
-  if (denied) return denied
+  const result = await authorizeConversationRead(request, id)
+  if (!result.ok) return result.response
 
   const body = await request.json().catch(() => null)
   const intervene = body?.intervene === true
 
   const config = getChatwootConfig()
   if (config) {
+    const isAdmin = callerIsAdmin(request)
+    const agentId = getCallerAgentId(request)
+    // authorizeConversationRead ya validó el id contra Chatwoot real (config
+    // presente) → assignee viene siempre poblado acá, nunca null.
+    const assignee = result.assignee!
+    const mine = agentId !== null && assignee.assigneeId === agentId
+
+    if (!isAdmin) {
+      if (intervene) {
+        const takeable = assignee.assigneeId === null || mine
+        if (!takeable) {
+          return NextResponse.json({ error: "sin_permiso" }, { status: 403 })
+        }
+      } else if (!mine) {
+        return NextResponse.json({ error: "sin_permiso" }, { status: 403 })
+      }
+    }
+
     try {
       // Se asigna al agente de Chatwoot de quien está interviniendo *ahora
       // mismo* (según su sesión, ver proxy.ts) — no siempre al dueño
       // del token compartido. Si el usuario logueado no tiene un agente de
       // Chatwoot vinculado (ver `chatwoot_agent_id` en scripts/manage-users.mjs),
       // cae al agente del token como antes.
-      // El header ya no es falseable: proxy.ts lo borra antes de fijarlo,
-      // así que si está presente lo puso el servidor a partir de la sesión.
-      const rawAgentId = request.headers.get(CHATWOOT_AGENT_ID_HEADER)
-      const callerAgentId = rawAgentId && /^[0-9]{1,18}$/.test(rawAgentId) ? Number(rawAgentId) : 0
-      const assigneeId = intervene
-        ? callerAgentId > 0
-          ? callerAgentId
-          : await getChatwootAgentId()
-        : null
+      const assigneeId = intervene ? (agentId ?? (await getChatwootAgentId())) : null
       await chatwootFetch(`/conversations/${id}/assignments`, {
         method: "POST",
         body: JSON.stringify({ assignee_id: assigneeId }),

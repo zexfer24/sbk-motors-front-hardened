@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { chatwootFetch, getChatwootConfig } from "@/lib/chatwoot/client"
-import { guardConversationRoute } from "@/lib/chatwoot/authz"
+import { guardConversationWrite } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -11,7 +11,7 @@ type RouteContext = { params: Promise<{ id: string }> }
 export async function POST(request: Request, { params }: RouteContext) {
   const { id } = await params
   // Cerrar la venta de un compañero (sabotaje) era posible sin comprobación.
-  const denied = await guardConversationRoute(request, id)
+  const denied = await guardConversationWrite(request, id)
   if (denied) return denied
 
   const config = getChatwootConfig()

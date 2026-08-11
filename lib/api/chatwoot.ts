@@ -147,6 +147,92 @@ export async function markConversationRead(conversationId: string): Promise<void
   if (!res.ok) throw new Error("No se pudo marcar como leída")
 }
 
+export interface Agent {
+  email: string
+  role: "admin" | "asesor"
+  chatwootAgentId: number | null
+}
+
+// admin-only (ver proxy.ts) — lista los asesores con agente de Chatwoot
+// vinculado, para el selector de "Asignar a…".
+export async function fetchAgents(): Promise<Agent[]> {
+  const res = await fetch(`${baseUrl()}/api/agents`, { cache: "no-store" })
+  if (!res.ok) throw new Error("No se pudo cargar la lista de asesores")
+  const data = await res.json()
+  return data.agents as Agent[]
+}
+
+// admin-only — asigna una conversación directamente a un asesor concreto
+// (o la desasigna con `null`), sin pasar por el flujo de "Intervenir".
+export async function assignConversation(
+  conversationId: string,
+  assigneeId: number | null,
+): Promise<void> {
+  const res = await fetch(
+    `${baseUrl()}/api/chatwoot/conversations/${conversationId}/assign`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assigneeId }),
+    },
+  )
+  if (!res.ok) {
+    if (res.status === 403) throw new Error("No tienes permiso para asignar esta conversación.")
+    throw new Error("No se pudo asignar la conversación.")
+  }
+}
+
+export interface ChatwootLabel {
+  id: number
+  title: string
+  description: string | null
+  color: string
+  showOnSidebar: boolean
+}
+
+// Catálogo de categorías de la cuenta — cualquier autenticado lo puede leer.
+export async function fetchLabels(): Promise<ChatwootLabel[]> {
+  const res = await fetch(`${baseUrl()}/api/chatwoot/labels`, { cache: "no-store" })
+  if (!res.ok) throw new Error("No se pudieron cargar las categorías")
+  const data = await res.json()
+  return data.labels as ChatwootLabel[]
+}
+
+// admin-only (ver proxy.ts) — crea una categoría nueva en el catálogo.
+export async function createLabel(input: { title: string; color: string }): Promise<ChatwootLabel> {
+  const res = await fetch(`${baseUrl()}/api/chatwoot/labels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    if (res.status === 403) throw new Error("No tienes permiso para crear categorías.")
+    throw new Error("No se pudo crear la categoría.")
+  }
+  return res.json()
+}
+
+// Reemplaza el set completo de etiquetas de una conversación.
+export async function setConversationLabels(
+  conversationId: string,
+  labels: string[],
+): Promise<string[]> {
+  const res = await fetch(
+    `${baseUrl()}/api/chatwoot/conversations/${conversationId}/labels`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ labels }),
+    },
+  )
+  if (!res.ok) {
+    if (res.status === 403) throw new Error("No tienes permiso para etiquetar esta conversación.")
+    throw new Error("No se pudieron guardar las etiquetas.")
+  }
+  const data = await res.json()
+  return data.labels as string[]
+}
+
 export async function closeConversation(
   conversationId: string,
 ): Promise<{ status: string; handledBy: string }> {
