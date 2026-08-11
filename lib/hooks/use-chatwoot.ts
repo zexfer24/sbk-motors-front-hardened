@@ -166,12 +166,21 @@ export function useChatwoot(active: boolean = true) {
     markConversationRead(activeId).catch(() => {})
   }, [activeId])
 
-  // Conexión en tiempo real: un evento del webhook de Chatwoot llega aquí
-  // en milisegundos. "conversation_changed" siempre refresca el listado
-  // (ya viene filtrado por permisos desde el servidor); "message_changed"
-  // solo refresca los mensajes si es justo la conversación abierta — si es
-  // otra, alcanza con que se actualice su fila en el listado (último
-  // mensaje, no leídos).
+  // Conexión en tiempo real: un evento del webhook de Chatwoot llega aquí en
+  // milisegundos. "conversation_changed" cubre creada/actualizada/cambio de
+  // estado — poco frecuente, se recarga el listado completo sin problema.
+  //
+  // "message_changed" en cambio dispara UNA VEZ POR MENSAJE de WhatsApp
+  // entrante. Recargar el listado completo (que en producción pagina varias
+  // veces contra Chatwoot) por cada mensaje fue justo lo que saturó Chatwoot
+  // — con suficientes asesores y mensajes seguidos, los barridos completos
+  // se acumulaban más rápido de lo que Chatwoot podía responderlos. Ya no
+  // disparan una recarga completa: si el mensaje es de la conversación
+  // abierta, se refrescan sus mensajes (como antes); si es de otra, se
+  // actualiza su fila EN MEMORIA (sin pegarle a la red) con lo único que ya
+  // sabemos del evento — el texto del último mensaje queda desactualizado
+  // hasta el próximo conversation_changed o el polling de respaldo, a
+  // propósito, en vez de justificar otro barrido completo.
   useEffect(() => {
     if (!active) return
 
@@ -185,11 +194,24 @@ export function useChatwoot(active: boolean = true) {
         return
       }
 
-      if (data.type === "conversation_changed" || data.type === "message_changed") {
+      if (data.type === "conversation_changed") {
         loadConversations({ silent: true })
+        return
       }
-      if (data.type === "message_changed" && data.conversationId === activeId && activeId) {
-        loadMessages(activeId)
+
+      if (data.type === "message_changed" && data.conversationId) {
+        if (data.conversationId === activeId) {
+          loadMessages(activeId)
+          return
+        }
+        const id = data.conversationId
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === id
+              ? { ...c, unreadCount: c.unreadCount + 1, lastMessageAt: new Date().toISOString() }
+              : c,
+          ),
+        )
       }
     }
 

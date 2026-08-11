@@ -122,12 +122,39 @@ async function fetchAllConversationsRaw(): Promise<Record<string, unknown>[]> {
   return all
 }
 
-// Pide las conversaciones a Chatwoot y sincroniza sus contactos en el CRM
-// (por teléfono). Devuelve `ok: false` si la API no responde — así el
-// front puede distinguir "no configurado" de "configurado pero caído".
-export async function fetchAndSyncConversations(): Promise<
-  { ok: true; conversations: MappedConversation[] } | { ok: false }
-> {
+type ConversationsResult = { ok: true; conversations: MappedConversation[] } | { ok: false }
+
+// ============================================================================
+// Single-flight + micro-cache — el barrido completo de páginas de arriba es
+// caro (~3s por página, secuencial) y este módulo se llama en CADA request a
+// /api/chatwoot/conversations. El SSE dispara ese endpoint por cada mensaje
+// de WhatsApp entrante (ver use-chatwoot.ts) más el polling de respaldo más
+// varias pestañas abiertas a la vez — sin esto, cada uno de esos disparaba
+// su propio barrido completo en paralelo, y con suficiente concurrencia
+// Chatwoot terminó al 232% de CPU respondiendo lo mismo una y otra vez.
+//
+// Es estado de proceso (Node module scope, anclado a globalThis para
+// sobrevivir el fast refresh de Turbopack en dev, mismo patrón que
+// lib/chatwoot/event-bus.ts) — funciona porque hoy corre una sola réplica.
+// Si el despliegue pasa a tener más de una, esto deja de colapsar peticiones
+// entre réplicas distintas (cada una tendría su propio caché) y haría falta
+// algo compartido (Redis) en su lugar.
+// ============================================================================
+const CACHE_TTL_MS = 2_500
+
+interface ConversationsCacheState {
+  inFlight: Promise<ConversationsResult> | null
+  fresh: { conversations: MappedConversation[]; expiresAt: number } | null
+}
+
+const globalForConversationsCache = globalThis as unknown as {
+  __chatwootConversationsCache?: ConversationsCacheState
+}
+const cacheState: ConversationsCacheState =
+  globalForConversationsCache.__chatwootConversationsCache ?? { inFlight: null, fresh: null }
+globalForConversationsCache.__chatwootConversationsCache = cacheState
+
+async function sweepConversations(): Promise<ConversationsResult> {
   try {
     // status=all — por defecto Chatwoot solo devuelve conversaciones
     // "open"; sin esto, una conversación resuelta (p. ej. tras cerrar una
@@ -152,8 +179,35 @@ export async function fetchAndSyncConversations(): Promise<
       })
     }
 
+    // Solo se cachea el ÉXITO — si Chatwoot respondió mal, la próxima
+    // llamada debe poder reintentar de una vez en vez de quedarse pegada a
+    // un error por 2.5s.
+    cacheState.fresh = { conversations, expiresAt: Date.now() + CACHE_TTL_MS }
     return { ok: true, conversations }
   } catch {
     return { ok: false }
   }
+}
+
+// Pide las conversaciones a Chatwoot y sincroniza sus contactos en el CRM
+// (por teléfono). Devuelve `ok: false` si la API no responde — así el
+// front puede distinguir "no configurado" de "configurado pero caído".
+export async function fetchAndSyncConversations(): Promise<ConversationsResult> {
+  const now = Date.now()
+  if (cacheState.fresh && cacheState.fresh.expiresAt > now) {
+    return { ok: true, conversations: cacheState.fresh.conversations }
+  }
+
+  // Ya hay un barrido en curso: todo el que llegue mientras tanto espera
+  // ESE resultado en vez de lanzar el suyo propio. No hay punto de `await`
+  // entre este check y la asignación de abajo, así que dos llamadas
+  // "simultáneas" nunca alcanzan a pisarse — JS resuelve una antes de que
+  // la otra corra.
+  if (cacheState.inFlight) return cacheState.inFlight
+
+  const sweep = sweepConversations().finally(() => {
+    cacheState.inFlight = null
+  })
+  cacheState.inFlight = sweep
+  return sweep
 }
