@@ -63,8 +63,34 @@ export type MappedConversation = ReturnType<typeof mapChatwootConversation>
 // por separado, escribirle al buzón nuevo (típico durante una migración,
 // si todavía tiene guardado el número anterior) — son dos conversaciones
 // reales y ninguna debe tapar a la otra en la lista.
+//
+// BUG (encontrado 2026-08-11): "más reciente" se decidía solo por
+// actividad, sin mirar el estado. Si para el mismo teléfono+buzón existían
+// dos conversaciones — una todavía ABIERTA con mensajes sin leer (p. ej. la
+// IA la tomó y nadie la miró después) y otra ya RESUELTA pero con actividad
+// más nueva — ganaba la resuelta y la abierta con pendientes desaparecía
+// del listado por completo, en cada barrido, sin avisar. Así se explican
+// los chats de IA que "nunca salen en Todos": no es un filtro tapándolos,
+// es que dedupeByPhone los descarta antes de que lleguen al front.
+//
+// Regla ahora: una conversación abierta (todo lo que no sea "resolved")
+// siempre gana sobre una resuelta, sin importar cuál tiene actividad más
+// reciente — nunca hay que perder de vista un chat que sigue esperando
+// respuesta a cambio de uno ya cerrado. Solo se compara actividad cuando
+// las dos son abiertas, o las dos están resueltas (mismo criterio de
+// siempre en esos dos casos).
+function isBetterConversation(a: MappedConversation, b: MappedConversation): boolean {
+  const aOpen = a.status !== "resolved"
+  const bOpen = b.status !== "resolved"
+  if (aOpen !== bOpen) return aOpen
+
+  const aActivity = a.lastMessageAt ?? a.createdAt
+  const bActivity = b.lastMessageAt ?? b.createdAt
+  return aActivity > bActivity
+}
+
 function dedupeByPhone(conversations: MappedConversation[]): MappedConversation[] {
-  const latestByKey = new Map<string, MappedConversation>()
+  const bestByKey = new Map<string, MappedConversation>()
   const withoutPhone: MappedConversation[] = []
 
   for (const c of conversations) {
@@ -73,15 +99,13 @@ function dedupeByPhone(conversations: MappedConversation[]): MappedConversation[
       continue
     }
     const key = `${c.phone}:${c.inboxId ?? ""}`
-    const existing = latestByKey.get(key)
-    const activity = c.lastMessageAt ?? c.createdAt
-    const existingActivity = existing ? (existing.lastMessageAt ?? existing.createdAt) : null
-    if (!existing || activity > existingActivity!) {
-      latestByKey.set(key, c)
+    const existing = bestByKey.get(key)
+    if (!existing || isBetterConversation(c, existing)) {
+      bestByKey.set(key, c)
     }
   }
 
-  return [...latestByKey.values(), ...withoutPhone]
+  return [...bestByKey.values(), ...withoutPhone]
 }
 
 // Techo de seguridad para los loops de páginas de abajo — a 25 por página
@@ -129,11 +153,11 @@ async function fetchConversationsSequential(fromPage: number): Promise<Record<st
 // Antes esto pedía cada página en SERIE (6 páginas × ~3s = ~18s por
 // barrido). Ahora, si la página 1 trae `meta.all_count`, se calcula cuántas
 // páginas hacen falta (con el tamaño de página OBSERVADO en esa misma
-// respuesta, nunca asumido a mano) y se piden todas las demás con
-// `Promise.all` — baja el barrido completo a ~3s (el tiempo de la página
-// más lenta). Si `all_count` no viene, se cae al loop en serie de siempre:
-// más lento pero siempre correcto, sin depender de un campo no documentado
-// como estable.
+// respuesta, nunca asumido a mano) y se piden todas las demás EN LOTES de
+// `CHATWOOT_PAGE_CONCURRENCY` (ver esa constante — no todas a la vez, ver
+// el addendum de la nota de incidente más abajo sobre por qué). Si
+// `all_count` no viene, se cae al loop en serie de siempre: más lento pero
+// siempre correcto, sin depender de un campo no documentado como estable.
 //
 // Red de seguridad: si la ÚLTIMA página pedida en paralelo vuelve
 // completamente llena, probablemente `all_count` quedó desactualizado
@@ -142,6 +166,34 @@ async function fetchConversationsSequential(fromPage: number): Promise<Record<st
 // vacía, igual que el camino sin `all_count`. Así nunca se vuelve a perder
 // conversaciones viejas del listado (el bug que motivó paginar en primer
 // lugar) a cambio de la velocidad.
+//
+// Cuántas a la vez — CHATWOOT_PAGE_CONCURRENCY: Chatwoot corre con
+// WEB_CONCURRENCY=3 (3 workers de Puma, confirmado en el servidor,
+// 2026-08-11). Pedir las 6-7 páginas restantes todas de una con
+// `Promise.all` no las paraleliza de verdad: las hace hacer cola detrás de
+// esos 3 procesos. Medido sin caché tras el primer despliegue de este
+// archivo: ~10s, PEOR que los ~7.5s de antes de "paralelizar". El límite de
+// abajo iguala el paralelismo del código al paralelismo real que Chatwoot
+// puede atender. Si algún día se sube WEB_CONCURRENCY en el servidor, subir
+// este número junto con eso (y viceversa si se baja).
+const CHATWOOT_PAGE_CONCURRENCY = 3
+
+// Pide `pages` en lotes de `concurrency` en vez de todas a la vez — ver
+// CHATWOOT_PAGE_CONCURRENCY arriba. Dentro de cada lote sigue siendo
+// allSettled (una página caída no tira el lote entero); entre lotes es
+// secuencial a propósito, para no superar nunca `concurrency` peticiones
+// en vuelo contra Chatwoot al mismo tiempo.
+async function fetchPagesLimited(
+  pages: number[],
+  concurrency: number,
+): Promise<PromiseSettledResult<ConversationsPageResult>[]> {
+  const results: PromiseSettledResult<ConversationsPageResult>[] = []
+  for (let i = 0; i < pages.length; i += concurrency) {
+    const chunk = pages.slice(i, i + concurrency)
+    results.push(...(await Promise.allSettled(chunk.map((page) => fetchConversationsPage(page)))))
+  }
+  return results
+}
 interface ConversationsFetchOutcome {
   raw: Record<string, unknown>[]
   // true si alguna página del barrido paralelo falló y se siguió con las
@@ -167,14 +219,16 @@ async function fetchAllConversationsRaw(): Promise<ConversationsFetchOutcome> {
   )
   if (totalPages <= 1) return { raw: first.batch, partial: false }
 
-  // allSettled, no all: si UNA página del barrido paralelo falla (timeout,
-  // 502 puntual), preferimos devolver las ~150 conversaciones que sí
-  // llegaron antes que tirar el listado entero y dejar al asesor con la
-  // pantalla en blanco por un solo tropiezo. El costo es que la lista
-  // puede quedar incompleta por una vuelta — se prioriza disponibilidad
-  // sobre completitud acá, a propósito.
-  const settled = await Promise.allSettled(
-    Array.from({ length: totalPages - 1 }, (_, i) => fetchConversationsPage(i + 2)),
+  // allSettled, no all: si UNA página del barrido falla (timeout, 502
+  // puntual), preferimos devolver las ~150 conversaciones que sí llegaron
+  // antes que tirar el listado entero y dejar al asesor con la pantalla en
+  // blanco por un solo tropiezo. El costo es que la lista puede quedar
+  // incompleta por una vuelta — se prioriza disponibilidad sobre
+  // completitud acá, a propósito. En lotes de CHATWOOT_PAGE_CONCURRENCY,
+  // no todas a la vez — ver fetchPagesLimited arriba.
+  const settled = await fetchPagesLimited(
+    Array.from({ length: totalPages - 1 }, (_, i) => i + 2),
+    CHATWOOT_PAGE_CONCURRENCY,
   )
 
   const fulfilled: ConversationsPageResult[] = []
@@ -245,6 +299,27 @@ type ConversationsResult =
 // sigue sin recargar el listado completo? ¿el debounce de C sigue en pie en
 // use-chatwoot.ts? ¿`meta.all_count` de Chatwoot se puso a devolver algo raro
 // (null, 0, un número que no cuadra) y forzó el fallback lento de D?
+//
+// ----------------------------------------------------------------------
+// ADDENDUM (2026-08-11, mismo día — verificado con acceso directo al
+// servidor): D tal como se desplegó en 437655b/f296c87 tenía un defecto.
+// `Promise.all` sobre las 6-7 páginas restantes asume que Chatwoot las
+// atiende en paralelo de verdad — pero Chatwoot corre con
+// WEB_CONCURRENCY=3 (nunca se aplicó la subida a 4 que proponía el plan de
+// infraestructura original). Con solo 3 workers de Puma, 7 peticiones
+// simultáneas no se paralelizan: hacen cola detrás de esos 3 procesos.
+// Medido sin caché: ~10s, PEOR que los ~7.5s de antes de "paralelizar". En
+// producción esto quedaba oculto casi siempre porque el caché de 15s
+// absorbe la mayoría de las cargas — pero cualquier momento en que el
+// caché expira con tráfico real simultáneo paga ese costo completo, y eso
+// es justo lo que reportaron los asesores como "cargas caóticamente lentas".
+//
+// Arreglo aplicado: fetchPagesLimited (arriba) — mismo `Promise.allSettled`
+// de siempre, pero en lotes de CHATWOOT_PAGE_CONCURRENCY (=3, igualado al
+// WEB_CONCURRENCY real de Chatwoot) en vez de todas las páginas a la vez.
+// Si el servidor sube WEB_CONCURRENCY, subir esa constante junto con eso —
+// son el mismo número por diseño.
+// ----------------------------------------------------------------------
 //
 // Single-flight + micro-cache — el barrido completo de páginas de arriba es
 // caro (secuencial: ~3s por página cuando no se pudo paralelizar por D) y
