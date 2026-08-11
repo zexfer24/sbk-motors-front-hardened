@@ -168,7 +168,10 @@ export function useChatwoot(active: boolean = true) {
 
   // Conexión en tiempo real: un evento del webhook de Chatwoot llega aquí en
   // milisegundos. "conversation_changed" cubre creada/actualizada/cambio de
-  // estado — poco frecuente, se recarga el listado completo sin problema.
+  // estado — bastante menos frecuente que un mensaje, pero Chatwoot puede
+  // mandar varios seguidos de golpe (p. ej. procesando una tanda de cambios).
+  // Ver la nota de incidente en lib/api/chatwoot-sync.ts para el contexto
+  // completo (A/B/C/D) de por qué esto quedó así.
   //
   // "message_changed" en cambio dispara UNA VEZ POR MENSAJE de WhatsApp
   // entrante. Recargar el listado completo (que en producción pagina varias
@@ -186,6 +189,23 @@ export function useChatwoot(active: boolean = true) {
 
     const source = new EventSource("/api/chatwoot/events")
 
+    // Coalescer para "conversation_changed": si llegan varios eventos
+    // seguidos, se agrupan en UNA sola recarga en vez de una por evento. A
+    // propósito dispara siempre a los ~800ms del PRIMER evento de la ventana
+    // (no se reinicia con cada evento nuevo) — así una ráfaga continua nunca
+    // puede posponer la recarga indefinidamente, solo acota cuántas veces se
+    // dispara. `let` local al efecto (no un ref del hook): este efecto ya se
+    // recrea entero cuando cambia `activeId`, así que el timer vive y muere
+    // con la misma instancia de EventSource a la que pertenece.
+    let coalesceTimer: ReturnType<typeof setTimeout> | null = null
+    function scheduleConversationsReload() {
+      if (coalesceTimer) return
+      coalesceTimer = setTimeout(() => {
+        coalesceTimer = null
+        loadConversations({ silent: true })
+      }, 800)
+    }
+
     source.onmessage = (ev) => {
       let data: { type?: string; conversationId?: string | null }
       try {
@@ -195,7 +215,7 @@ export function useChatwoot(active: boolean = true) {
       }
 
       if (data.type === "conversation_changed") {
-        loadConversations({ silent: true })
+        scheduleConversationsReload()
         return
       }
 
@@ -218,7 +238,10 @@ export function useChatwoot(active: boolean = true) {
     // EventSource reconecta solo ante errores de red; no hace falta
     // lógica de reintento a mano. Mientras se reconecta, FALLBACK_POLL_MS
     // sigue cubriendo el listado.
-    return () => source.close()
+    return () => {
+      source.close()
+      if (coalesceTimer) clearTimeout(coalesceTimer)
+    }
   }, [active, activeId, loadConversations, loadMessages])
 
   const selectConversation = useCallback((id: string) => {
