@@ -6,9 +6,10 @@
 // configuradas) y para sincronizar los contactos del CRM.
 // ============================================================================
 
-import { chatwootFetch } from "@/lib/chatwoot/client"
+import { chatwootFetch, getChatwootConfig } from "@/lib/chatwoot/client"
 import { upsertContactFromChatwoot } from "@/lib/api/contacts-demo-store"
 import { listInboxes } from "@/lib/chatwoot/inboxes"
+import { fetchConversationsFromDb } from "@/lib/api/chatwoot-db"
 
 export function mapChatwootConversation(
   raw: Record<string, unknown>,
@@ -401,6 +402,37 @@ type ConversationsResult =
 //    innecesaria.
 // ----------------------------------------------------------------------
 //
+// ----------------------------------------------------------------------
+// ADDENDUM 3 (2026-08-11): todo lo de arriba (A-D + los dos hallazgos del
+// ADDENDUM 2) reparte mejor la cola contra la API de Chatwoot, pero no baja
+// el costo real de cada página: ~900ms de CPU en Ruby serializando JSON,
+// medido en el servidor. Con 3 workers de Puma (WEB_CONCURRENCY=3) y ~6-8
+// páginas, el piso queda en ~3s incluso con concurrencia perfecta — no es
+// cola, es trabajo real que hay que pagar sí o sí mientras se pase por esa
+// API.
+//
+// Se agregó una vía alternativa (tryFetchConversationsFromDb, arriba, y
+// lib/api/chatwoot-db.ts) que lee el mismo listado directo del Postgres de
+// Chatwoot con un rol de solo lectura (`sbk_front_ro`, SOLO SELECT) — la
+// misma consulta mide ~19ms contra el servidor. SOLO para este listado:
+// nada que escribe (mandar mensaje, asignar, cerrar, etiquetar) pasa por
+// ahí, sigue yendo por chatwootFetch — ver chatwoot-db.ts para el porqué y
+// el mapeo campo por campo contra el esquema real de Chatwoot v4.16.2.
+//
+// Es opcional y con fallback automático: si las variables CHATWOOT_DB_* no
+// están configuradas (p. ej. mientras la red de Docker entre este
+// contenedor y el Postgres de Chatwoot no está conectada) o la consulta
+// falla por lo que sea, sweepConversations cae sola a fetchAllConversationsRaw
+// (la vía API de siempre, con todo lo de A-D) sin que el front note nada
+// más que el log de cuál vía sirvió esa carga. No hace falta otro deploy
+// para activarla — se prende sola en cuanto esas variables queden puestas
+// y la red esté lista.
+//
+// Limitación consciente: avatarUrl siempre sale null por esta vía (es un
+// método derivado de Chatwoot con Active Storage, no una columna — no se
+// puede replicar por SQL). El front ya tolera avatarUrl null.
+// ----------------------------------------------------------------------
+//
 // Single-flight + micro-cache — el barrido completo de páginas de arriba es
 // caro (secuencial: ~3s por página cuando no se pudo paralelizar por D) y
 // este módulo se llama en CADA request a /api/chatwoot/conversations.
@@ -431,19 +463,48 @@ const cacheState: ConversationsCacheState =
   globalForConversationsCache.__chatwootConversationsCache ?? { inFlight: null, fresh: null }
 globalForConversationsCache.__chatwootConversationsCache = cacheState
 
+// Intenta la vía rápida (Postgres directo, ver chatwoot-db.ts) antes de la
+// API. Devuelve `null` si no está disponible (variables de entorno
+// CHATWOOT_DB_* sin configurar todavía — nada que loguear, es el estado
+// esperado hasta que la red de Docker quede conectada) o si la consulta
+// falló de verdad, en cuyo caso sí queda registrado acá para poder
+// confirmar en los logs del contenedor cuál de las dos vías está sirviendo
+// cada carga.
+async function tryFetchConversationsFromDb(): Promise<MappedConversation[] | null> {
+  const config = getChatwootConfig()
+  if (!config) return null
+
+  const conversations = await fetchConversationsFromDb(config.accountId)
+  if (conversations === null) {
+    console.error("[chatwoot-sync] vía Postgres directo no disponible o falló, cae a la API de Chatwoot")
+  }
+  return conversations
+}
+
 async function sweepConversations(): Promise<ConversationsResult> {
   try {
-    // status=all — por defecto Chatwoot solo devuelve conversaciones
-    // "open"; sin esto, una conversación resuelta (p. ej. tras cerrar una
-    // venta) desaparecería por completo en vez de pasar a "Cerrados".
-    const [{ raw: payload, partial }, inboxes] = await Promise.all([
-      fetchAllConversationsRaw(),
-      listInboxes().catch(() => []),
-    ])
-    const inboxNames = new Map(inboxes.map((ib) => [ib.id, ib.name]))
-    const conversations = dedupeByPhone(
-      payload.map((raw) => mapChatwootConversation(raw, inboxNames)),
-    )
+    const viaDb = await tryFetchConversationsFromDb()
+
+    let conversations: MappedConversation[]
+    let partial: boolean
+
+    if (viaDb !== null) {
+      conversations = dedupeByPhone(viaDb)
+      partial = false
+    } else {
+      // status=all — por defecto Chatwoot solo devuelve conversaciones
+      // "open"; sin esto, una conversación resuelta (p. ej. tras cerrar una
+      // venta) desaparecería por completo en vez de pasar a "Cerrados".
+      const [{ raw: payload, partial: apiPartial }, inboxes] = await Promise.all([
+        fetchAllConversationsRaw(),
+        listInboxes().catch(() => []),
+      ])
+      const inboxNames = new Map(inboxes.map((ib) => [ib.id, ib.name]))
+      conversations = dedupeByPhone(
+        payload.map((raw) => mapChatwootConversation(raw, inboxNames)),
+      )
+      partial = apiPartial
+    }
 
     for (const c of conversations) {
       if (!c.phone) continue
