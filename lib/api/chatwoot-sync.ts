@@ -142,35 +142,68 @@ async function fetchConversationsSequential(fromPage: number): Promise<Record<st
 // vacía, igual que el camino sin `all_count`. Así nunca se vuelve a perder
 // conversaciones viejas del listado (el bug que motivó paginar en primer
 // lugar) a cambio de la velocidad.
-async function fetchAllConversationsRaw(): Promise<Record<string, unknown>[]> {
+interface ConversationsFetchOutcome {
+  raw: Record<string, unknown>[]
+  // true si alguna página del barrido paralelo falló y se siguió con las
+  // que sí llegaron, en vez de tirar todo el resultado. Decisión explícita
+  // (ver comentario más abajo) — nunca se descarta en silencio, queda
+  // registrado con console.error para que aparezca en los logs del
+  // contenedor.
+  partial: boolean
+}
+
+async function fetchAllConversationsRaw(): Promise<ConversationsFetchOutcome> {
   const first = await fetchConversationsPage(1)
-  if (first.batch.length === 0) return []
+  if (first.batch.length === 0) return { raw: [], partial: false }
 
   const pageSize = first.batch.length
   if (first.allCount === null || pageSize === 0) {
-    return [...first.batch, ...(await fetchConversationsSequential(2))]
+    return { raw: [...first.batch, ...(await fetchConversationsSequential(2))], partial: false }
   }
 
   const totalPages = Math.min(
     Math.ceil(first.allCount / pageSize),
     CONVERSATIONS_PAGE_SAFETY_CAP,
   )
-  if (totalPages <= 1) return first.batch
+  if (totalPages <= 1) return { raw: first.batch, partial: false }
 
-  const rest = await Promise.all(
+  // allSettled, no all: si UNA página del barrido paralelo falla (timeout,
+  // 502 puntual), preferimos devolver las ~150 conversaciones que sí
+  // llegaron antes que tirar el listado entero y dejar al asesor con la
+  // pantalla en blanco por un solo tropiezo. El costo es que la lista
+  // puede quedar incompleta por una vuelta — se prioriza disponibilidad
+  // sobre completitud acá, a propósito.
+  const settled = await Promise.allSettled(
     Array.from({ length: totalPages - 1 }, (_, i) => fetchConversationsPage(i + 2)),
   )
-  const all = [...first.batch, ...rest.flatMap((r) => r.batch)]
 
-  const lastPage = rest[rest.length - 1]
-  if (lastPage.batch.length === pageSize) {
+  const fulfilled: ConversationsPageResult[] = []
+  let anyRejected = false
+  for (const result of settled) {
+    if (result.status === "fulfilled") {
+      fulfilled.push(result.value)
+    } else {
+      anyRejected = true
+      console.error("[chatwoot-sync] una página del barrido de conversaciones falló:", result.reason)
+    }
+  }
+
+  const all = [...first.batch, ...fulfilled.flatMap((r) => r.batch)]
+
+  // Red de seguridad (ver nota de incidente más abajo): si la última
+  // página que SÍ se pudo traer vino completamente llena, `all_count`
+  // probablemente estaba desactualizado y puede haber más detrás.
+  const lastOk = fulfilled[fulfilled.length - 1]
+  if (lastOk && lastOk.batch.length === pageSize) {
     all.push(...(await fetchConversationsSequential(totalPages + 1)))
   }
 
-  return all
+  return { raw: all, partial: anyRejected }
 }
 
-type ConversationsResult = { ok: true; conversations: MappedConversation[] } | { ok: false }
+type ConversationsResult =
+  | { ok: true; conversations: MappedConversation[]; partial: boolean }
+  | { ok: false }
 
 // ============================================================================
 // NOTA DE INCIDENTE — leer esto primero si Chatwoot vuelve a saturarse o el
@@ -224,11 +257,16 @@ type ConversationsResult = { ok: true; conversations: MappedConversation[] } | {
 // entre réplicas distintas (cada una tendría su propio caché) y haría falta
 // algo compartido (Redis) en su lugar.
 // ============================================================================
-const CACHE_TTL_MS = 2_500
+// 2.5s -> 15s (2026-08-11, plan de optimización de infraestructura): los
+// asesores refrescan cada 45s (FALLBACK_POLL_MS en use-chatwoot.ts), así
+// que con un TTL corto casi siempre llegaban con el caché frío y pagaban
+// el barrido completo de nuevo. A 15s, la mayoría de esos refrescos caen
+// dentro de la ventana y se sirven directo sin tocar Chatwoot.
+const CACHE_TTL_MS = 15_000
 
 interface ConversationsCacheState {
   inFlight: Promise<ConversationsResult> | null
-  fresh: { conversations: MappedConversation[]; expiresAt: number } | null
+  fresh: { conversations: MappedConversation[]; partial: boolean; expiresAt: number } | null
 }
 
 const globalForConversationsCache = globalThis as unknown as {
@@ -243,7 +281,7 @@ async function sweepConversations(): Promise<ConversationsResult> {
     // status=all — por defecto Chatwoot solo devuelve conversaciones
     // "open"; sin esto, una conversación resuelta (p. ej. tras cerrar una
     // venta) desaparecería por completo en vez de pasar a "Cerrados".
-    const [payload, inboxes] = await Promise.all([
+    const [{ raw: payload, partial }, inboxes] = await Promise.all([
       fetchAllConversationsRaw(),
       listInboxes().catch(() => []),
     ])
@@ -263,11 +301,11 @@ async function sweepConversations(): Promise<ConversationsResult> {
       })
     }
 
-    // Solo se cachea el ÉXITO — si Chatwoot respondió mal, la próxima
-    // llamada debe poder reintentar de una vez en vez de quedarse pegada a
-    // un error por 2.5s.
-    cacheState.fresh = { conversations, expiresAt: Date.now() + CACHE_TTL_MS }
-    return { ok: true, conversations }
+    // Un barrido parcial también se cachea — es mejor servir esas ~150
+    // conversaciones desde caché por un rato que reintentar el barrido
+    // completo (con la página que ya falló una vez) en cada request.
+    cacheState.fresh = { conversations, partial, expiresAt: Date.now() + CACHE_TTL_MS }
+    return { ok: true, conversations, partial }
   } catch {
     return { ok: false }
   }
@@ -279,7 +317,7 @@ async function sweepConversations(): Promise<ConversationsResult> {
 export async function fetchAndSyncConversations(): Promise<ConversationsResult> {
   const now = Date.now()
   if (cacheState.fresh && cacheState.fresh.expiresAt > now) {
-    return { ok: true, conversations: cacheState.fresh.conversations }
+    return { ok: true, conversations: cacheState.fresh.conversations, partial: cacheState.fresh.partial }
   }
 
   // Ya hay un barrido en curso: todo el que llegue mientras tanto espera

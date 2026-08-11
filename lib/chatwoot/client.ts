@@ -81,6 +81,17 @@ function assertSafePath(path: string): void {
   }
 }
 
+// Sin esto, un Chatwoot que se cuelga (un worker de Puma atascado, un
+// hipo de red dentro de la red docker) deja la petición esperando sin
+// límite — `fetch` de Node no tiene timeout por defecto. Eso es lo único
+// que explica cargas de "hasta 10 minutos": ninguna optimización de
+// paginación o caché pone techo al tiempo de UNA sola petición que se
+// cuelga, solo reducen cuántas se hacen. Con esto, en el peor caso la
+// petición falla rápido y el front puede mostrar un error en vez de
+// quedarse con la pantalla en blanco indefinidamente.
+const CHATWOOT_TIMEOUT_MS = 10_000
+const CHATWOOT_UPLOAD_TIMEOUT_MS = 30_000 // los adjuntos pueden tardar más, dependen del tamaño del archivo
+
 export async function chatwootFetch<T>(
   path: string,
   options: RequestInit = {},
@@ -97,6 +108,7 @@ export async function chatwootFetch<T>(
       api_access_token: config.apiToken,
       ...options.headers,
     },
+    signal: options.signal ?? AbortSignal.timeout(CHATWOOT_TIMEOUT_MS),
   })
 
   if (!res.ok) {
@@ -120,6 +132,7 @@ export async function chatwootFetchForm<T>(path: string, formData: FormData): Pr
     method: "POST",
     headers: { api_access_token: config.apiToken },
     body: formData,
+    signal: AbortSignal.timeout(CHATWOOT_UPLOAD_TIMEOUT_MS),
   })
 
   if (!res.ok) {

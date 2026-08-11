@@ -34,7 +34,10 @@ export async function GET(request: Request) {
       canWrite: canWrite(c.assigneeId),
     }))
 
-    return NextResponse.json({ conversations, source: "chatwoot" })
+    // `partial: true` = alguna página del barrido falló y esto es lo que se
+    // pudo traer (ver fetchAllConversationsRaw) — no se usa en la UI
+    // todavía, pero queda visible en la respuesta en vez de escondido.
+    return NextResponse.json({ conversations, source: "chatwoot", partial: result.partial })
   }
 
   return NextResponse.json({ conversations: listConversations(), source: "demo" })
