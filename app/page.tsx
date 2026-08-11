@@ -19,9 +19,9 @@ const ASESOR_VIEWS: View[] = ['chat', 'clientes', 'inventario']
 // (oculta con opacidad + pointer-events, no desmontada) para las
 // siguientes veces — así cambiar de pestaña es instantáneo y no repite la
 // carga de datos ni el parpadeo de "cargando" cada vez. Solo la pestaña
-// activa recibe `active`, para que WhatsApp, el Panel y Ventas (las que
-// hacen polling) pausen sus peticiones en segundo plano mientras no se
-// están viendo.
+// activa recibe `active`, para que todas las que hacen polling (WhatsApp,
+// Panel, Ventas, Clientes, Inventario) pausen sus peticiones en segundo
+// plano mientras no se están viendo y refresquen de una vez al volver.
 export default function Page() {
   const { user, loading, signOut } = useAuth()
   const allowedViews = user?.role === 'admin' ? ALL_VIEWS : ASESOR_VIEWS
@@ -85,8 +85,8 @@ export default function Page() {
             >
               {v === 'panel' && <DashboardView active={isActive} />}
               {v === 'chat' && <ChatView active={isActive} />}
-              {v === 'clientes' && <CrmView />}
-              {v === 'inventario' && <InventoryView />}
+              {v === 'clientes' && <CrmView active={isActive} />}
+              {v === 'inventario' && <InventoryView active={isActive} />}
               {v === 'ventas' && <OrdersView active={isActive} />}
             </div>
           )

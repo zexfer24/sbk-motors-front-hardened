@@ -9,9 +9,9 @@ import { InventoryTable } from '@/components/inventory-table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
-export function InventoryView() {
+export function InventoryView({ active = true }: { active?: boolean }) {
   const { items, source, loading, error, page, setPage, query, search, totalPages, totalCount } =
-    useInventory()
+    useInventory(active)
   const { rate } = useExchangeRate()
 
   const hasResults = items.length > 0

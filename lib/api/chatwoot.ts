@@ -69,11 +69,16 @@ export async function fetchConversations(): Promise<{
   return { conversations: data.conversations, source: data.source }
 }
 
+// `before` pide la página de mensajes anteriores al que traiga ese id — así
+// se puede desplazar hacia arriba en el historial en vez de quedarse solo
+// con la última tanda que trae Chatwoot por defecto.
 export async function fetchMessages(
   conversationId: string,
+  before?: string,
 ): Promise<{ messages: ChatwootMessage[]; source: DataSource }> {
+  const qs = before ? `?before=${encodeURIComponent(before)}` : ""
   const res = await fetch(
-    `${baseUrl()}/api/chatwoot/conversations/${conversationId}/messages`,
+    `${baseUrl()}/api/chatwoot/conversations/${conversationId}/messages${qs}`,
     { cache: "no-store" },
   )
   if (!res.ok) throw new Error("No se pudieron cargar los mensajes")

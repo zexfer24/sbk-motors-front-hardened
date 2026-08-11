@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useLayoutEffect } from 'react'
 import {
   ArrowLeft,
   Bot,
@@ -26,6 +26,9 @@ import { cn } from '@/lib/utils'
 interface ChatPanelProps {
   conversation: ChatwootConversation
   messages: ChatwootMessage[]
+  hasMoreMessages: boolean
+  loadingOlderMessages: boolean
+  onLoadOlderMessages: () => void
   intervened: boolean
   onBack: () => void
   onSend: (text: string) => void
@@ -37,6 +40,9 @@ interface ChatPanelProps {
 export function ChatPanel({
   conversation,
   messages,
+  hasMoreMessages,
+  loadingOlderMessages,
+  onLoadOlderMessages,
   intervened,
   onBack,
   onSend,
@@ -54,6 +60,8 @@ export function ChatPanel({
   const [interveneError, setInterveneError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const lastMessageIdRef = useRef<string | null>(null)
+  const pendingRestoreRef = useRef<{ prevScrollHeight: number; prevScrollTop: number } | null>(null)
   const { user } = useAuth()
   const {
     replies: quickReplies,
@@ -63,12 +71,43 @@ export function ChatPanel({
     remove: removeQuickReply,
   } = useQuickReplies()
 
+  // Solo baja el scroll cuando cambia el ÚLTIMO mensaje (uno nuevo llegó o
+  // se mandó) — si lo que cambió fue anteponer mensajes viejos al abrir
+  // historial hacia arriba, el último sigue siendo el mismo y no hay que
+  // saltar de vuelta al fondo, eso arruinaría el "cargar más" (ver
+  // handleScroll más abajo).
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: 'smooth',
-    })
+    const lastId = messages[messages.length - 1]?.id ?? null
+    if (lastId !== lastMessageIdRef.current) {
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: 'smooth',
+      })
+    }
+    lastMessageIdRef.current = lastId
   }, [messages])
+
+  // La restauración de posición corre en un layout effect (antes de pintar)
+  // en vez de en el then() del fetch — para cuando la promesa resuelve y
+  // React re-renderiza con los mensajes de más, este efecto ya puede leer
+  // el scrollHeight nuevo y corregir el salto antes de que se vea.
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    const pending = pendingRestoreRef.current
+    if (!el || !pending) return
+    el.scrollTop = el.scrollHeight - pending.prevScrollHeight + pending.prevScrollTop
+    pendingRestoreRef.current = null
+  }, [messages])
+
+  // Al acercarse al tope del historial, pide la tanda anterior y preserva
+  // la posición visual: sin esto, anteponer mensajes arriba empuja todo
+  // hacia abajo y el usuario pierde de vista lo que estaba leyendo.
+  function handleScroll() {
+    const el = scrollRef.current
+    if (!el || el.scrollTop > 80 || loadingOlderMessages || !hasMoreMessages) return
+    pendingRestoreRef.current = { prevScrollHeight: el.scrollHeight, prevScrollTop: el.scrollTop }
+    onLoadOlderMessages()
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -209,8 +248,15 @@ export function ChatPanel({
 
       <div
         ref={scrollRef}
+        onScroll={handleScroll}
         className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-5 sm:px-6"
       >
+        {loadingOlderMessages && (
+          <div className="flex justify-center py-2">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        )}
+
         {messages.length === 0 ? (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center">

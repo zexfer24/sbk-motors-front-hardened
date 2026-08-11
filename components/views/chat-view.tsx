@@ -22,6 +22,9 @@ export function ChatView({ active }: ChatViewProps) {
     activeId,
     activeConversation,
     messages,
+    hasMoreMessages,
+    loadingOlderMessages,
+    loadOlderMessages,
     source,
     loading,
     intervened,
@@ -171,6 +174,9 @@ export function ChatView({ active }: ChatViewProps) {
             <ChatPanel
               conversation={activeConversation}
               messages={messages}
+              hasMoreMessages={hasMoreMessages}
+              loadingOlderMessages={loadingOlderMessages}
+              onLoadOlderMessages={loadOlderMessages}
               intervened={intervened}
               onBack={() => setShowConversationOnMobile(false)}
               onSend={(text) => send({ content: text, messageType: 'outgoing' })}

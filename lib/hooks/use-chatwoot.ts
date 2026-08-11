@@ -35,6 +35,8 @@ export function useChatwoot(active: boolean = true) {
   const [conversations, setConversations] = useState<ChatwootConversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatwootMessage[]>([])
+  const [hasMoreMessages, setHasMoreMessages] = useState(false)
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false)
   const [source, setSource] = useState<DataSource>("demo")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -79,11 +81,45 @@ export function useChatwoot(active: boolean = true) {
       const data = await fetchMessages(conversationId)
       if (requestId !== messagesRequestId.current) return
       setMessages(data.messages)
+      // Chatwoot no manda un total ni un "hay más" explícito — si la
+      // primera tanda viene vacía, no hay nada que paginar; si trae algo,
+      // se asume que puede haber más atrás hasta que un `before` devuelva
+      // una tanda vacía (ver loadOlderMessages).
+      setHasMoreMessages(data.messages.length > 0)
     } catch {
       if (requestId !== messagesRequestId.current) return
       setMessages([])
+      setHasMoreMessages(false)
     }
   }, [])
+
+  // Pide la tanda de mensajes anterior a la más vieja que ya se tiene
+  // cargada y la antepone — así se puede seguir subiendo en el historial en
+  // vez de quedarse solo con los últimos mensajes que trae Chatwoot por
+  // defecto. Reusa el mismo contador de secuencia que loadMessages: si una
+  // recarga completa (p. ej. por un evento de SSE) arranca mientras esto
+  // sigue en vuelo, el resultado de esta tanda vieja se descarta en vez de
+  // pisar el historial ya reemplazado.
+  const loadOlderMessages = useCallback(async () => {
+    if (!activeId || messages.length === 0) return
+    const requestId = ++messagesRequestId.current
+    setLoadingOlderMessages(true)
+    try {
+      const oldestId = messages[0].id
+      const data = await fetchMessages(activeId, oldestId)
+      if (requestId !== messagesRequestId.current) return
+      if (data.messages.length === 0) {
+        setHasMoreMessages(false)
+      } else {
+        setMessages((prev) => [...data.messages, ...prev])
+      }
+    } catch {
+      // se deja hasMoreMessages como estaba — el usuario puede reintentar
+      // volviendo a scrollear arriba.
+    } finally {
+      if (requestId === messagesRequestId.current) setLoadingOlderMessages(false)
+    }
+  }, [activeId, messages])
 
   useEffect(() => {
     loadConversations()
@@ -165,6 +201,7 @@ export function useChatwoot(active: boolean = true) {
     setActiveId((prev) => {
       if (prev === id) return prev
       setMessages([])
+      setHasMoreMessages(false)
       return id
     })
   }, [])
@@ -265,6 +302,9 @@ export function useChatwoot(active: boolean = true) {
     activeId,
     activeConversation,
     messages,
+    hasMoreMessages,
+    loadingOlderMessages,
+    loadOlderMessages,
     source,
     loading,
     error,

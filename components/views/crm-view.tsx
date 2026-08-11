@@ -85,8 +85,8 @@ function CustomerCard({
   )
 }
 
-export function CrmView() {
-  const { contacts, source, loading, error, create, update, remove } = useContacts()
+export function CrmView({ active = true }: { active?: boolean }) {
+  const { contacts, source, loading, error, create, update, remove } = useContacts(active)
   const [query, setQuery] = useState('')
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [editingContact, setEditingContact] = useState<Contact | null>(null)

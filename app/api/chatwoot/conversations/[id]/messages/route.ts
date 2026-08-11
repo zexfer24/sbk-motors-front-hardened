@@ -12,12 +12,21 @@ export async function GET(request: Request, { params }: RouteContext) {
   const denied = await guardConversationRoute(request, id)
   if (denied) return denied
 
+  // Chatwoot solo devuelve la última tanda de mensajes (por defecto, sin
+  // esto el historial se veía cortado) — `before` pide la página anterior a
+  // ese id de mensaje para poder desplazarse hacia arriba en el historial.
+  const beforeParam = new URL(request.url).searchParams.get("before")
+  const before = beforeParam && /^[0-9]{1,18}$/.test(beforeParam) ? beforeParam : null
+
   const config = getChatwootConfig()
 
   if (config) {
     try {
+      const path = before
+        ? `/conversations/${id}/messages?before=${before}`
+        : `/conversations/${id}/messages`
       const data = await chatwootFetch<{ payload: Record<string, unknown>[] }>(
-        `/conversations/${id}/messages`,
+        path,
         { cache: "no-store" },
       )
       const messages = data.payload.map(mapChatwootMessage)
