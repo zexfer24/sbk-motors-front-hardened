@@ -134,14 +134,38 @@ async function fetchConversationsPage(page: number): Promise<ConversationsPageRe
 // vacía — el camino "correcto pero lento" de siempre, sin asumir ningún
 // tamaño de página. Es el fallback de fetchAllConversationsRaw cuando no
 // se puede (o no conviene) paralelizar.
-async function fetchConversationsSequential(fromPage: number): Promise<Record<string, unknown>[]> {
+//
+// BUG (encontrado 2026-08-11): si UNA página de este loop fallaba (timeout,
+// 502 puntual), el error subía sin atrapar hasta sweepConversations, que lo
+// agarra en su catch genérico y descarta TODO el barrido — incluidas las
+// páginas que sí habían llegado bien más arriba (las del camino paralelo,
+// protegidas con allSettled). El front recibía un 502 en vez de la lista
+// parcial. Y esto era más probable justo bajo carga alta — el peor momento
+// para perder el listado completo por un solo tropiezo. Ahora, igual que el
+// camino paralelo, una página fallida corta el loop pero devuelve lo que sí
+// se pudo traer, marcado `partial: true` en vez de tirarlo todo.
+interface SequentialFetchOutcome {
+  raw: Record<string, unknown>[]
+  partial: boolean
+}
+
+async function fetchConversationsSequential(fromPage: number): Promise<SequentialFetchOutcome> {
   const all: Record<string, unknown>[] = []
   for (let page = fromPage; page <= CONVERSATIONS_PAGE_SAFETY_CAP; page++) {
-    const { batch } = await fetchConversationsPage(page)
-    if (batch.length === 0) break
-    all.push(...batch)
+    let result: ConversationsPageResult
+    try {
+      result = await fetchConversationsPage(page)
+    } catch (err) {
+      console.error(
+        `[chatwoot-sync] la página ${page} del barrido secuencial falló, se corta acá con lo que ya se tiene:`,
+        err,
+      )
+      return { raw: all, partial: true }
+    }
+    if (result.batch.length === 0) break
+    all.push(...result.batch)
   }
-  return all
+  return { raw: all, partial: false }
 }
 
 // Chatwoot pagina /conversations — pedir solo la página 1 significa que
@@ -178,20 +202,46 @@ async function fetchConversationsSequential(fromPage: number): Promise<Record<st
 // este número junto con eso (y viceversa si se baja).
 const CHATWOOT_PAGE_CONCURRENCY = 3
 
-// Pide `pages` en lotes de `concurrency` en vez de todas a la vez — ver
-// CHATWOOT_PAGE_CONCURRENCY arriba. Dentro de cada lote sigue siendo
-// allSettled (una página caída no tira el lote entero); entre lotes es
-// secuencial a propósito, para no superar nunca `concurrency` peticiones
-// en vuelo contra Chatwoot al mismo tiempo.
+// Pide `pages` sin superar `concurrency` peticiones en vuelo contra
+// Chatwoot al mismo tiempo — ver CHATWOOT_PAGE_CONCURRENCY arriba.
+//
+// BUG (encontrado 2026-08-11, mismo día del primer despliegue de esto):
+// la versión anterior armaba LOTES de tamaño `concurrency` y esperaba a que
+// las 3 peticiones del lote actual TERMINARAN TODAS antes de lanzar el
+// siguiente lote (una barrera). Si una de las 3 tardaba cerca del timeout
+// (el p99 real medido en el servidor fue ~11s) mientras las otras 2
+// terminaban en 300ms, esos 2 workers de Chatwoot quedaban ociosos varios
+// segundos esperando el cierre del lote en vez de arrancar ya la página
+// siguiente — justo lo contrario de lo que se buscaba con el límite de
+// concurrencia.
+//
+// Ahora es un pool real: `concurrency` "trabajadores" comparten un cursor
+// (`nextIndex`) y cada uno, en cuanto termina su página, toma la próxima
+// pendiente — sin esperar a que las demás del "lote" anterior cierren. Los
+// 3 workers de Chatwoot quedan ocupados de forma continua en vez de
+// sincronizados en bloques. `nextIndex++` es seguro sin lock: JS es de un
+// solo hilo, no hay punto de `await` entre leer y avanzar el cursor.
 async function fetchPagesLimited(
   pages: number[],
   concurrency: number,
 ): Promise<PromiseSettledResult<ConversationsPageResult>[]> {
-  const results: PromiseSettledResult<ConversationsPageResult>[] = []
-  for (let i = 0; i < pages.length; i += concurrency) {
-    const chunk = pages.slice(i, i + concurrency)
-    results.push(...(await Promise.allSettled(chunk.map((page) => fetchConversationsPage(page)))))
+  const results: PromiseSettledResult<ConversationsPageResult>[] = new Array(pages.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < pages.length) {
+      const i = nextIndex++
+      try {
+        results[i] = { status: "fulfilled", value: await fetchConversationsPage(pages[i]) }
+      } catch (reason) {
+        results[i] = { status: "rejected", reason }
+      }
+    }
   }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, pages.length) }, () => worker()),
+  )
   return results
 }
 interface ConversationsFetchOutcome {
@@ -210,7 +260,8 @@ async function fetchAllConversationsRaw(): Promise<ConversationsFetchOutcome> {
 
   const pageSize = first.batch.length
   if (first.allCount === null || pageSize === 0) {
-    return { raw: [...first.batch, ...(await fetchConversationsSequential(2))], partial: false }
+    const rest = await fetchConversationsSequential(2)
+    return { raw: [...first.batch, ...rest.raw], partial: rest.partial }
   }
 
   const totalPages = Math.min(
@@ -248,11 +299,14 @@ async function fetchAllConversationsRaw(): Promise<ConversationsFetchOutcome> {
   // página que SÍ se pudo traer vino completamente llena, `all_count`
   // probablemente estaba desactualizado y puede haber más detrás.
   const lastOk = fulfilled[fulfilled.length - 1]
+  let safetyNetPartial = false
   if (lastOk && lastOk.batch.length === pageSize) {
-    all.push(...(await fetchConversationsSequential(totalPages + 1)))
+    const rest = await fetchConversationsSequential(totalPages + 1)
+    all.push(...rest.raw)
+    safetyNetPartial = rest.partial
   }
 
-  return { raw: all, partial: anyRejected }
+  return { raw: all, partial: anyRejected || safetyNetPartial }
 }
 
 type ConversationsResult =
@@ -319,6 +373,32 @@ type ConversationsResult =
 // WEB_CONCURRENCY real de Chatwoot) en vez de todas las páginas a la vez.
 // Si el servidor sube WEB_CONCURRENCY, subir esa constante junto con eso —
 // son el mismo número por diseño.
+// ----------------------------------------------------------------------
+//
+// ----------------------------------------------------------------------
+// ADDENDUM 2 (2026-08-11, mismo día — revisión completa del archivo pedida
+// después del addendum anterior): dos hallazgos más, ambos ya corregidos.
+//
+// 1) fetchConversationsSequential (los caminos de respaldo: cuando Chatwoot
+//    no manda `all_count`, y la red de seguridad de arriba) no toleraba
+//    fallos — a diferencia del camino paralelo, protegido con `allSettled`
+//    a propósito. Si UNA página de esos caminos fallaba, el error subía sin
+//    atrapar hasta sweepConversations y tiraba TODO el barrido a `ok:
+//    false` (502 al front), incluidas las páginas paralelas que sí habían
+//    llegado bien. Y era más probable justo bajo carga alta — el peor
+//    momento para perder el listado completo por un solo tropiezo. Ahora
+//    fetchConversationsSequential también devuelve `partial: true` en vez
+//    de lanzar, igual que el resto del archivo.
+//
+// 2) fetchPagesLimited armaba lotes de tamaño CHATWOOT_PAGE_CONCURRENCY y
+//    esperaba a que el lote ENTERO terminara antes de lanzar el siguiente
+//    (una barrera) — si una página del lote tardaba cerca del timeout
+//    (p99 real ~11s) mientras las otras dos terminaban rápido, esos 2
+//    workers de Chatwoot quedaban ociosos esperando el cierre del lote en
+//    vez de arrancar la próxima página ya. Ahora es un pool real: cada
+//    worker toma la siguiente página pendiente en cuanto termina la suya,
+//    sin esperar a los demás — mismo límite de concurrencia, sin la espera
+//    innecesaria.
 // ----------------------------------------------------------------------
 //
 // Single-flight + micro-cache — el barrido completo de páginas de arriba es
