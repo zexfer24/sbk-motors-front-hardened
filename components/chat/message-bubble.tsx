@@ -68,7 +68,7 @@ interface MessageBubbleProps {
   message: ChatwootMessage
   /** Mensaje al que este responde, ya resuelto contra la tanda cargada — null si no es respuesta o no se pudo resolver. */
   replyPreview?: ChatwootMessage | null
-  /** Solo se ofrece "Responder" (clic derecho) si se pasa esto — y solo aplica a mensajes del cliente. */
+  /** Solo se ofrece "Responder" (clic derecho) si se pasa esto — aplica a cualquier mensaje, propio o del cliente (no a lo ya borrado). */
   onReply?: (message: ChatwootMessage) => void
   /** Solo se ofrece "Eliminar" (clic derecho) si se pasa esto — y solo aplica a lo que mandó el propio negocio, nunca al cliente. */
   onDelete?: (message: ChatwootMessage) => void
@@ -92,16 +92,18 @@ export function MessageBubble({ message, replyPreview, onReply, onDelete }: Mess
   const isCustomer = message.messageType === 'incoming'
   const isAi = message.senderType === 'ai'
   const isHuman = message.senderType === 'human'
-  const canReply = isCustomer && !!onReply
+  // Estilo WhatsApp real: se puede responder a CUALQUIER mensaje (del
+  // cliente o nuestro), no solo al del cliente — antes estaba limitado a
+  // isCustomer, a propósito se saca esa restricción acá.
+  const canReply = !message.deleted && !!onReply
   const canDelete = !isCustomer && !!onDelete && !message.deleted
   const [lightbox, setLightbox] = useState<ChatwootAttachment | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   // Clic derecho (o mantener presionado en móvil, que el navegador traduce
-  // al mismo evento) — "Responder" solo en lo que mandó el cliente (estilo
-  // WhatsApp: no tiene sentido "citar" lo que mandó el propio negocio),
-  // "Eliminar" solo en lo que mandó el propio negocio (nunca el mensaje del
-  // cliente — no hay forma de borrarle algo que ya recibió).
+  // al mismo evento) — "Responder" en cualquier mensaje propio o del
+  // cliente, "Eliminar" solo en lo que mandó el propio negocio (nunca el
+  // mensaje del cliente — no hay forma de borrarle algo que ya recibió).
   function handleContextMenu(e: React.MouseEvent) {
     if (!canReply && !canDelete) return
     e.preventDefault()

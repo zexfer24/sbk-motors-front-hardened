@@ -50,6 +50,15 @@ function lastIncomingMessage(messages: ChatwootMessage[]): ChatwootMessage | nul
   return null
 }
 
+// Ahora se puede responder a cualquier mensaje, no solo al del cliente (ver
+// handleReply más abajo) — el banner de "Respondiendo a…" tiene que decir a
+// quién le pertenece de verdad ese mensaje, no siempre al contacto.
+function replyTargetLabel(target: ChatwootMessage, contactName: string): string {
+  if (target.messageType === 'incoming') return contactName
+  if (target.senderName) return target.senderName
+  return target.senderType === 'ai' ? 'Asistente IA' : 'Asesor'
+}
+
 function formatRemaining(ms: number): string {
   const totalMinutes = Math.max(0, Math.round(ms / 60000))
   const hours = Math.floor(totalMinutes / 60)
@@ -240,10 +249,11 @@ export function ChatPanel({
     setReplyTarget(null)
   }
 
-  // Solo se puede responder a un mensaje del cliente (estilo WhatsApp: no
-  // tiene sentido "citar" algo que mandó el propio negocio).
+  // Estilo WhatsApp real: se puede responder a cualquier mensaje de la
+  // conversación, sea del cliente o nuestro — solo se excluyen las notas de
+  // sistema (no son mensajes de verdad) y lo ya borrado.
   function handleReply(message: ChatwootMessage) {
-    if (message.messageType !== 'incoming') return
+    if (message.messageType === 'system' || message.deleted) return
     setReplyTarget(message)
     textareaRef.current?.focus()
   }
@@ -491,16 +501,20 @@ export function ChatPanel({
           )}
         </div>
 
-        {conversation.canWrite && (
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => setLabelsPickerOpen((v) => !v)}
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground transition-all hover:text-foreground active:scale-95"
-            >
-              <Tag className="h-4 w-4" />
-              <span className="hidden sm:inline">Categoría</span>
-            </button>
+        {/* A diferencia de "Cerrar venta"/"Intervenir", categorizar NO
+            depende de canWrite — cualquier asesor puede etiquetar cualquier
+            chat (mismo criterio que la lectura), no solo el suyo. Solo
+            crear/editar/borrar categorías del catálogo sigue siendo
+            admin-only (ver el botón "Administrar categorías" más abajo). */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setLabelsPickerOpen((v) => !v)}
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground transition-all hover:text-foreground active:scale-95"
+          >
+            <Tag className="h-4 w-4" />
+            <span className="hidden sm:inline">Categoría</span>
+          </button>
 
             {labelsPickerOpen && (
               <>
@@ -565,8 +579,7 @@ export function ChatPanel({
                 </div>
               </>
             )}
-          </div>
-        )}
+        </div>
 
         {conversation.canWrite && (
           <button
@@ -761,7 +774,7 @@ export function ChatPanel({
                 <Reply className="h-3.5 w-3.5 shrink-0 text-primary" />
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-primary">
-                    Respondiendo a {conversation.contactName}
+                    Respondiendo a {replyTargetLabel(replyTarget, conversation.contactName)}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
                     {replyTarget.content || (replyTarget.attachments.length > 0 ? '📎 Adjunto' : '')}

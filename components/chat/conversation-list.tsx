@@ -1,7 +1,20 @@
 'use client'
 
-import { Bot, Check, ChevronDown, Filter, Mail, MessageSquarePlus, Search, Tag, User, X } from 'lucide-react'
-import { useState } from 'react'
+import {
+  ArrowDownNarrowWide,
+  ArrowUpNarrowWide,
+  Bot,
+  Check,
+  ChevronDown,
+  Filter,
+  Mail,
+  MessageSquarePlus,
+  Search,
+  Tag,
+  User,
+  X,
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatwootConversation } from '@/lib/types/chatwoot'
 import type { ChatwootLabel } from '@/lib/api/chatwoot'
@@ -29,6 +42,17 @@ const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
   { key: 'resolved', label: 'Cerrados' },
 ]
 
+// Preferencia personal, no un filtro que oculte nada — por eso vive aparte
+// de statusFilter/categoryFilters (no se toca con "Limpiar filtros") y se
+// guarda en localStorage para que cada asesor la vea a su gusto en cada
+// visita, no solo en la sesión actual.
+type SortOrder = 'asc' | 'desc'
+const SORT_ORDER_KEY = 'sbk:chat-sort-order'
+const SORT_OPTIONS: { key: SortOrder; label: string; icon: typeof ArrowUpNarrowWide }[] = [
+  { key: 'asc', label: 'Más antiguos primero', icon: ArrowUpNarrowWide },
+  { key: 'desc', label: 'Más nuevos primero', icon: ArrowDownNarrowWide },
+]
+
 // Reglas del negocio (2026-08-12, corregida 2026-08-13, personalizada por
 // asesor 2026-08-12):
 //   "Sin contestar" y "Abiertas" son privados por perfil para un ASESOR —
@@ -44,7 +68,13 @@ const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
 //     personalizar): "Sin contestar" = sin asignar y sin leer (cola global
 //     de lo que nadie tomó todavía), "Abiertas" = cualquier conversación
 //     abierta y asignada, sea de quien sea.
-//   "Libres" (nuevo) — abierta y SIN asignar, para cualquiera (leído o no).
+//   "Libres" (nuevo, corregida 2026-08-12) — abierta, SIN asignar Y con
+//     mensajes sin leer (no cualquier chat sin asignar — eso ya lo cubre
+//     "Todos", que muestra todo sin filtrar). Sin exigir sin leer, "Libres"
+//     terminaba mostrando lo mismo que "Todos" filtrado apenas por
+//     asignación, lo cual confundía a simple vista. Con esto, "Libres" es
+//     de verdad "nadie lo tiene Y nadie lo atendió todavía" — el mismo
+//     criterio de la vieja "Sin contestar" global, ahora con nombre propio.
 //     Sin esto, con las dos de arriba restringidas a "lo mío", un asesor no
 //     tenía forma de ver ni tomar un chat nuevo por su cuenta — dependía de
 //     que un admin se lo asignara a mano desde el Centro de Control. Este
@@ -63,7 +93,7 @@ function matchesStatus(
   const isMine = myAgentId !== null && assigneeId === myAgentId
   switch (status) {
     case 'unassigned':
-      return c.status === 'open' && assigneeId === null
+      return c.status === 'open' && assigneeId === null && c.unreadCount > 0
     case 'pending':
       if (c.status !== 'open') return false
       return isAdmin ? assigneeId === null && c.unreadCount > 0 : isMine && c.unreadCount > 0
@@ -93,10 +123,30 @@ export function ConversationList({
   // dentro de categorías, cualquiera de las seleccionadas cuenta (OR).
   const [statusFilter, setStatusFilter] = useState<StatusKey | null>(null)
   const [categoryFilters, setCategoryFilters] = useState<string[]>([])
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
   const [filterMenuOpen, setFilterMenuOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; conversationId: string } | null>(
     null,
   )
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SORT_ORDER_KEY)
+      if (saved === 'asc' || saved === 'desc') setSortOrder(saved)
+    } catch {
+      // localStorage deshabilitado (modo privado, etc.) — se queda en el
+      // orden por defecto, sin persistencia entre visitas.
+    }
+  }, [])
+
+  function handleSortOrderChange(next: SortOrder) {
+    setSortOrder(next)
+    try {
+      localStorage.setItem(SORT_ORDER_KEY, next)
+    } catch {
+      // ver comentario del efecto de arriba
+    }
+  }
 
   function toggleCategory(title: string) {
     setCategoryFilters((prev) =>
@@ -132,6 +182,16 @@ export function ConversationList({
       return false
     }
     return true
+  })
+
+  // Por orden de llegada (createdAt) — mismo criterio que sweepConversations
+  // en lib/api/chatwoot-sync.ts, que ya entrega la lista en ascendente. Se
+  // reordena igual acá (en vez de confiar en que ya venga así) para no
+  // depender del orden exacto que traiga el servidor, y para poder invertirla
+  // sin tocar nada del lado del backend.
+  const sorted = [...filtered].sort((a, b) => {
+    const diff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    return sortOrder === 'asc' ? diff : -diff
   })
 
   // Un conteo por cada filtro de estado (no solo "Sin contestar") — reusa
@@ -257,6 +317,29 @@ export function ConversationList({
                     ))}
                   </div>
 
+                  <div className="border-b border-border px-3 py-2">
+                    <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Orden
+                    </p>
+                    {SORT_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => handleSortOrderChange(opt.key)}
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary',
+                          sortOrder === opt.key ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        <opt.icon
+                          className={cn('h-3.5 w-3.5 shrink-0', sortOrder === opt.key ? 'text-primary' : 'text-muted-foreground')}
+                        />
+                        <span className="flex-1 truncate">{opt.label}</span>
+                        {sortOrder === opt.key && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className="px-3 py-2">
                     <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
                       Categorías
@@ -313,14 +396,14 @@ export function ConversationList({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {filtered.length === 0 ? (
+        {sorted.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
             <p className="text-sm text-muted-foreground">
               {search ? 'Sin resultados' : 'No hay conversaciones'}
             </p>
           </div>
         ) : (
-          filtered.map((c, i) => {
+          sorted.map((c, i) => {
             const isActive = c.id === activeId
             const color = avatarColor(c.phone || c.contactName)
             return (

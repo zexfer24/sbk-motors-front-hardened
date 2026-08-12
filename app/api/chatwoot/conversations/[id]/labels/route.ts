@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getChatwootConfig } from "@/lib/chatwoot/client"
 import { getConversationLabels, setConversationLabels } from "@/lib/chatwoot/labels"
 import { invalidateConversationsCache } from "@/lib/api/chatwoot-sync"
-import { guardConversationRead, guardConversationWrite } from "@/lib/chatwoot/authz"
+import { guardConversationRead } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -21,12 +21,14 @@ export async function GET(request: Request, { params }: RouteContext) {
   }
 }
 
-// Etiquetar queda dentro del mismo perímetro que mandar un mensaje — admin o
-// quien tiene la conversación asignada — para que no cualquiera reetiquete
-// el chat de un compañero.
+// A diferencia de mandar un mensaje, etiquetar NO exige tener la
+// conversación asignada — cualquier asesor autenticado puede categorizar
+// cualquier chat (mismo criterio que la lectura, que ya es libre para todo
+// el equipo). Administrar el catálogo (crear/editar/borrar categorías) sí
+// sigue siendo admin-only, ver /api/chatwoot/labels y /api/chatwoot/labels/[id].
 export async function POST(request: Request, { params }: RouteContext) {
   const { id } = await params
-  const denied = await guardConversationWrite(request, id)
+  const denied = await guardConversationRead(request, id)
   if (denied) return denied
 
   const body = await request.json().catch(() => null)

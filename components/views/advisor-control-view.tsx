@@ -57,6 +57,10 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
   }
 
   const open = conversations.filter((c) => c.status === 'open')
+  // A propósito NO exige unreadCount > 0 (a diferencia del filtro "Libres"
+  // de components/chat/conversation-list.tsx) — acá es un inventario
+  // completo de lo sin asignar para que el admin reparta, no solo la cola
+  // urgente de autoservicio de los asesores.
   const unassigned = open.filter((c) => c.assigneeId == null)
   const linkedAgents = useMemo(() => (agents ?? []).filter((a) => a.chatwootAgentId !== null), [agents])
 
