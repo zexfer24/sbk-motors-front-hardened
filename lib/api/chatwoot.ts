@@ -141,6 +141,16 @@ export async function toggleIntervention(
   return res.json()
 }
 
+// Borra un mensaje ya mandado — de ESTE panel/Chatwoot, no del teléfono del
+// cliente (ver el comentario del route.ts sobre por qué no existe "editar").
+export async function deleteMessage(conversationId: string, messageId: string): Promise<void> {
+  const res = await fetch(
+    `${baseUrl()}/api/chatwoot/conversations/${conversationId}/messages/${messageId}`,
+    { method: "DELETE" },
+  )
+  if (!res.ok) throw new Error("No se pudo borrar el mensaje")
+}
+
 export async function markConversationRead(conversationId: string): Promise<void> {
   const res = await fetch(
     `${baseUrl()}/api/chatwoot/conversations/${conversationId}/read`,

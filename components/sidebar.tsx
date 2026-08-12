@@ -10,13 +10,14 @@ import {
   MessageCircle,
   Receipt,
   Settings2,
+  UserCog,
   Users,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { motion } from 'framer-motion'
 
-export type View = 'panel' | 'chat' | 'clientes' | 'inventario' | 'ventas' | 'ajustes'
+export type View = 'panel' | 'chat' | 'clientes' | 'inventario' | 'ventas' | 'asesores' | 'ajustes'
 
 interface NavItem {
   id: View
@@ -30,6 +31,7 @@ const navItems: NavItem[] = [
   { id: 'clientes', icon: Users, label: 'Clientes' },
   { id: 'inventario', icon: Boxes, label: 'Inventario' },
   { id: 'ventas', icon: Receipt, label: 'Ventas' },
+  { id: 'asesores', icon: UserCog, label: 'Asesores' },
 ]
 
 interface SidebarProps {

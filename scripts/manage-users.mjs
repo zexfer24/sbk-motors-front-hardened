@@ -9,6 +9,7 @@
 //   node scripts/manage-users.mjs list
 //   node scripts/manage-users.mjs reset-password <email>
 //   node scripts/manage-users.mjs link-chatwoot <email> <chatwoot_agent_id>
+//   node scripts/manage-users.mjs set-role <email> <asesor|admin>
 //
 // Lee SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY de .env.local — nunca corre
 // en el navegador, solo desde tu máquina o un entorno de confianza.
@@ -133,6 +134,35 @@ async function linkChatwoot(email, chatwootAgentId) {
   return { email, agentId }
 }
 
+async function setRole(email, role) {
+  if (role !== "asesor" && role !== "admin") {
+    console.error(`Rol inválido: "${role}" — usa "asesor" o "admin"`)
+    process.exit(1)
+  }
+
+  const { data: list, error: listError } = await supabase.auth.admin.listUsers()
+  if (listError) {
+    console.error(listError.message)
+    process.exit(1)
+  }
+  const existing = list.users.find((u) => u.email === email)
+  if (!existing) {
+    console.error(`No existe ninguna cuenta con el correo ${email}`)
+    process.exit(1)
+  }
+
+  // Mismo motivo que linkChatwoot: mandar el objeto completo de
+  // app_metadata para no perder chatwoot_agent_id u otra cosa que ya tenía.
+  const { error } = await supabase.auth.admin.updateUserById(existing.id, {
+    app_metadata: { ...existing.app_metadata, role },
+  })
+  if (error) {
+    console.error(error.message)
+    process.exit(1)
+  }
+  return { email, role }
+}
+
 async function main() {
   const [, , cmd, ...rest] = process.argv
 
@@ -171,6 +201,17 @@ async function main() {
     return
   }
 
+  if (cmd === "set-role") {
+    const [email, role] = rest
+    if (!email || !role) {
+      console.error("Uso: node scripts/manage-users.mjs set-role <email> <asesor|admin>")
+      process.exit(1)
+    }
+    const result = await setRole(email, role)
+    console.log(`✓ ${result.email}  ->  rol: ${result.role}`)
+    return
+  }
+
   if (cmd === "list") {
     const { data, error } = await supabase.auth.admin.listUsers()
     if (error) {
@@ -189,6 +230,7 @@ async function main() {
   console.log("  node scripts/manage-users.mjs create <email> <asesor|admin>")
   console.log("  node scripts/manage-users.mjs reset-password <email>")
   console.log("  node scripts/manage-users.mjs link-chatwoot <email> <chatwoot_agent_id>")
+  console.log("  node scripts/manage-users.mjs set-role <email> <asesor|admin>")
   console.log("  node scripts/manage-users.mjs list")
 }
 

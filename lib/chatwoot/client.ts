@@ -150,7 +150,11 @@ export async function chatwootFetch<T>(
     throw new Error(`Chatwoot error ${res.status}: ${body}`)
   }
 
-  return res.json()
+  // Algunos endpoints (p. ej. el DELETE de mensajes) responden 200 con el
+  // cuerpo vacío — sin esto, res.json() tira "Unexpected end of JSON input"
+  // sobre una llamada que en realidad SÍ tuvo éxito.
+  const text = await res.text()
+  return (text ? JSON.parse(text) : {}) as T
 }
 
 // Para endpoints que reciben archivos (p. ej. mensajes con adjuntos) —

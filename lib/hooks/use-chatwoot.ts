@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import {
   assignConversation,
   closeConversation,
+  deleteMessage as deleteMessageApi,
   fetchConversations,
   fetchMessages,
   markConversationRead,
@@ -268,6 +269,29 @@ export function useChatwoot(active: boolean = true) {
     }
   }, [active, activeId, loadConversations, loadMessages])
 
+  // Marca el mensaje como borrado al toque (mismo criterio que Chatwoot al
+  // eliminarlo de verdad: vacía contenido/adjuntos en vez de sacarlo del
+  // historial, ver mapChatwootMessage) y revierte si el borrado real falla.
+  const deleteMessage = useCallback(
+    async (messageId: string): Promise<{ error: string } | { ok: true }> => {
+      if (!activeId) return { error: "No hay conversación seleccionada." }
+      const previous = messages.find((m) => m.id === messageId) ?? null
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, content: "", attachments: [], deleted: true } : m)),
+      )
+      try {
+        await deleteMessageApi(activeId, messageId)
+        return { ok: true }
+      } catch (err) {
+        if (previous) {
+          setMessages((prev) => prev.map((m) => (m.id === messageId ? previous : m)))
+        }
+        return { error: err instanceof Error ? err.message : "No se pudo borrar el mensaje." }
+      }
+    },
+    [activeId, messages],
+  )
+
   const selectConversation = useCallback((id: string) => {
     setActiveId((prev) => {
       if (prev === id) return prev
@@ -522,6 +546,7 @@ export function useChatwoot(active: boolean = true) {
     selectConversation,
     send,
     sendImage,
+    deleteMessage,
     markUnread,
     toggle,
     assign,

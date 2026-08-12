@@ -32,6 +32,7 @@ export function ChatView({ active }: ChatViewProps) {
     selectConversation,
     send,
     sendImage,
+    deleteMessage,
     markUnread,
     toggle,
     assign,
@@ -204,6 +205,7 @@ export function ChatView({ active }: ChatViewProps) {
               onBack={() => setShowConversationOnMobile(false)}
               onSend={(text, inReplyTo) => send({ content: text, messageType: 'outgoing', inReplyTo })}
               onSendImage={sendImage}
+              onDeleteMessage={deleteMessage}
               onToggleIntervene={toggle}
               onAssign={assign}
               onSetLabels={setLabels}

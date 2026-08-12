@@ -21,6 +21,8 @@ export interface ChatwootMessage {
   status?: "sent" | "delivered" | "read"
   /** id (de Chatwoot) del mensaje al que este responde — respuesta citada estilo WhatsApp. */
   inReplyTo?: string | null
+  /** true si se borró (ver DELETE de conversations/[id]/messages/[messageId]) — el contenido ya viene vacío, esto es solo para mostrar el aviso de "Mensaje eliminado" en vez de una burbuja vacía. */
+  deleted?: boolean
 }
 
 export interface ChatwootConversation {

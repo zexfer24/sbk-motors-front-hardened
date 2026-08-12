@@ -7,15 +7,16 @@ import { ChatView } from '@/components/views/chat-view'
 import { CrmView } from '@/components/views/crm-view'
 import { InventoryView } from '@/components/views/inventory-view'
 import { OrdersView } from '@/components/views/orders-view'
+import { AdvisorControlView } from '@/components/views/advisor-control-view'
 import { SettingsView } from '@/components/views/settings-view'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { cn } from '@/lib/utils'
 
-const ALL_VIEWS: View[] = ['panel', 'chat', 'clientes', 'inventario', 'ventas', 'ajustes']
-// Panel y Ventas son solo para dueños/supervisor — los asesores solo
-// necesitan Chats, Clientes e Inventario para trabajar. Ajustes es de
-// cualquier usuario logueado (elige su propio tema), no pasa por este
-// gate de rol.
+const ALL_VIEWS: View[] = ['panel', 'chat', 'clientes', 'inventario', 'ventas', 'asesores', 'ajustes']
+// Panel, Ventas y Asesores (Centro de control) son solo para dueños/
+// supervisor — los asesores solo necesitan Chats, Clientes e Inventario
+// para trabajar. Ajustes es de cualquier usuario logueado (elige su propio
+// tema), no pasa por este gate de rol.
 const ASESOR_VIEWS: View[] = ['chat', 'clientes', 'inventario', 'ajustes']
 
 // Cada pestaña se monta la primera vez que se visita y se queda montada
@@ -91,6 +92,7 @@ export default function Page() {
               {v === 'clientes' && <CrmView active={isActive} />}
               {v === 'inventario' && <InventoryView active={isActive} />}
               {v === 'ventas' && <OrdersView active={isActive} />}
+              {v === 'asesores' && <AdvisorControlView active={isActive} />}
               {v === 'ajustes' && <SettingsView />}
             </div>
           )

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Bot, Check, CheckCheck, Download, File, Paperclip, Play, Reply, User, X } from 'lucide-react'
+import { Bot, Check, CheckCheck, Download, File, Paperclip, Play, Reply, Trash2, User, X } from 'lucide-react'
 import type { ChatwootAttachment, ChatwootMessage } from '@/lib/types/chatwoot'
 import { cn } from '@/lib/utils'
 
@@ -70,9 +70,11 @@ interface MessageBubbleProps {
   replyPreview?: ChatwootMessage | null
   /** Solo se ofrece "Responder" (clic derecho) si se pasa esto — y solo aplica a mensajes del cliente. */
   onReply?: (message: ChatwootMessage) => void
+  /** Solo se ofrece "Eliminar" (clic derecho) si se pasa esto — y solo aplica a lo que mandó el propio negocio, nunca al cliente. */
+  onDelete?: (message: ChatwootMessage) => void
 }
 
-export function MessageBubble({ message, replyPreview, onReply }: MessageBubbleProps) {
+export function MessageBubble({ message, replyPreview, onReply, onDelete }: MessageBubbleProps) {
   // Notas de sistema (tomar/soltar intervención) — sintéticas y locales a
   // esta sesión, no vienen de Chatwoot (ver toggle() en use-chatwoot.ts para
   // el motivo). Se muestran centradas como aviso, nunca como burbuja de
@@ -90,14 +92,18 @@ export function MessageBubble({ message, replyPreview, onReply }: MessageBubbleP
   const isCustomer = message.messageType === 'incoming'
   const isAi = message.senderType === 'ai'
   const isHuman = message.senderType === 'human'
+  const canReply = isCustomer && !!onReply
+  const canDelete = !isCustomer && !!onDelete && !message.deleted
   const [lightbox, setLightbox] = useState<ChatwootAttachment | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   // Clic derecho (o mantener presionado en móvil, que el navegador traduce
-  // al mismo evento) sobre un mensaje del cliente — estilo WhatsApp: no
-  // tiene sentido "responder" a lo que el propio negocio mandó.
+  // al mismo evento) — "Responder" solo en lo que mandó el cliente (estilo
+  // WhatsApp: no tiene sentido "citar" lo que mandó el propio negocio),
+  // "Eliminar" solo en lo que mandó el propio negocio (nunca el mensaje del
+  // cliente — no hay forma de borrarle algo que ya recibió).
   function handleContextMenu(e: React.MouseEvent) {
-    if (!isCustomer || !onReply) return
+    if (!canReply && !canDelete) return
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY })
   }
@@ -159,11 +165,15 @@ export function MessageBubble({ message, replyPreview, onReply }: MessageBubbleP
             </div>
           )}
 
-          {message.content && (
-            <p className="whitespace-pre-wrap text-pretty">{message.content}</p>
+          {message.deleted ? (
+            <p className="italic text-muted-foreground">Mensaje eliminado</p>
+          ) : (
+            message.content && (
+              <p className="whitespace-pre-wrap text-pretty">{message.content}</p>
+            )
           )}
 
-          {message.attachments.length > 0 && (
+          {!message.deleted && message.attachments.length > 0 && (
             <div className={cn('flex flex-wrap gap-2', message.content && 'mt-2')}>
               {message.attachments.map((att) => (
                 <AttachmentPreview
@@ -199,7 +209,7 @@ export function MessageBubble({ message, replyPreview, onReply }: MessageBubbleP
       </div>
 
       {contextMenu &&
-        onReply &&
+        (canReply || canDelete) &&
         createPortal(
           <>
             <button
@@ -222,18 +232,34 @@ export function MessageBubble({ message, replyPreview, onReply }: MessageBubbleP
               style={{ left: contextMenu.x, top: contextMenu.y }}
               className="fixed z-50 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50"
             >
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  onReply(message)
-                  setContextMenu(null)
-                }}
-                className="flex items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary"
-              >
-                <Reply className="h-3.5 w-3.5" />
-                Responder
-              </button>
+              {canReply && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onReply!(message)
+                    setContextMenu(null)
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary"
+                >
+                  <Reply className="h-3.5 w-3.5" />
+                  Responder
+                </button>
+              )}
+              {canDelete && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onDelete!(message)
+                    setContextMenu(null)
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 text-left text-sm text-primary transition-colors hover:bg-secondary"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Eliminar
+                </button>
+              )}
             </div>
           </>,
           document.body,

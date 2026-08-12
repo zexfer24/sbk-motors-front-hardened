@@ -519,6 +519,17 @@ async function sweepConversations(): Promise<ConversationsResult> {
       partial = apiPartial
     }
 
+    // Orden de llegada: el más viejo arriba, los nuevos se van agregando
+    // abajo — como una cola de atención. Por `createdAt` (cuándo se abrió la
+    // conversación) y no por `lastMessageAt` a propósito: con actividad
+    // reordenaría la lista cada vez que alguien escribe, y el pedido es una
+    // cola estable, no "los más recientes primero". Único punto donde se
+    // arma la lista final, así que cubre tanto la vía Postgres como la de
+    // la API por igual.
+    conversations = [...conversations].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    )
+
     for (const c of conversations) {
       if (!c.phone) continue
       upsertContactFromChatwoot({

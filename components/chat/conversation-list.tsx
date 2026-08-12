@@ -20,35 +20,35 @@ interface ConversationListProps {
   labelCatalogLoading: boolean
 }
 
-type StatusKey = 'pending' | 'open_human' | 'resolved'
+type StatusKey = 'pending' | 'open_human' | 'unassigned' | 'resolved'
 
 const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
   { key: 'pending', label: 'Sin contestar' },
   { key: 'open_human', label: 'Abiertas' },
+  { key: 'unassigned', label: 'Libres' },
   { key: 'resolved', label: 'Cerrados' },
 ]
 
-// Reglas del negocio (2026-08-12, corregida 2026-08-13):
-//   "Sin contestar" — abierta, SIN asignar, Y con mensajes sin leer.
-//     La primera versión de esta regla (sin exigir unreadCount) mezclaba
-//     ahí cualquier chat sin asignar aunque el cliente ya hubiera sido
-//     atendido y el mensaje estuviera visto — con el bot de IA desconectado
-//     eso incluía un montón de conversaciones viejas sin dueño pero sin
-//     nada pendiente de responder. Exigir las dos cosas a la vez (sin
-//     asignar Y sin leer) es lo que de verdad significa "nadie le
-//     contestó todavía" — ver también onMarkUnread más abajo, que existe
-//     justo para poder devolver un chat a este tab a mano.
-//     El tab "IA" se retiró del menú por el mismo motivo (bot en
-//     mantenimiento) — se puede reagregar el día que se reactive, filtrando
-//     por `handledBy === 'ai'` como antes.
-//   "Abiertas" — abierta y CON asesor asignado (intervenir asigna al
-//     agente que interviene, ver app/api/chatwoot/conversations/[id]/intervene/route.ts,
-//     así que "intervenida" y "asignada" son el mismo estado acá). Es
-//     privado por perfil: cada asesor solo ve LAS SUYAS en este tab —
-//     puede seguir viendo las de otros compañeros desde "Todos" (la
-//     lectura es libre para todo el equipo, ver lib/chatwoot/authz.ts),
-//     simplemente no aparecen bajo su "Abiertas". El admin ve las de
-//     TODOS los asesores acá (vista de supervisor).
+// Reglas del negocio (2026-08-12, corregida 2026-08-13, personalizada por
+// asesor 2026-08-12):
+//   "Sin contestar" y "Abiertas" son privados por perfil para un ASESOR —
+//     cada uno ve ahí solo lo que tiene asignado A ÉL, partido según si
+//     tiene mensajes nuevos sin atender o no:
+//       - "Sin contestar" (asesor) = asignada a mí Y con mensajes sin leer.
+//       - "Abiertas" (asesor)      = asignada a mí Y ya al día (sin leer = 0).
+//     Un asesor sin agente de Chatwoot vinculado (myAgentId null) no puede
+//     "tener" nada asignado — sin la comprobación explícita de myAgentId,
+//     `assigneeId === myAgentId` sería `null === null` y le mostraría TODO
+//     lo sin asignar como si fuera suyo.
+//   El admin ve ambos tabs igual que antes (vista de supervisor, sin
+//     personalizar): "Sin contestar" = sin asignar y sin leer (cola global
+//     de lo que nadie tomó todavía), "Abiertas" = cualquier conversación
+//     abierta y asignada, sea de quien sea.
+//   "Libres" (nuevo) — abierta y SIN asignar, para cualquiera (leído o no).
+//     Sin esto, con las dos de arriba restringidas a "lo mío", un asesor no
+//     tenía forma de ver ni tomar un chat nuevo por su cuenta — dependía de
+//     que un admin se lo asignara a mano desde el Centro de Control. Este
+//     tab mantiene el "Intervenir" de toda la vida como autoservicio.
 //   "Cerrados" — resuelta. Hoy la única forma de resolver una conversación
 //     desde este sistema es cerrar una venta (ver
 //     app/api/chatwoot/conversations/[id]/close/route.ts), así que ya
@@ -60,12 +60,16 @@ function matchesStatus(
   isAdmin: boolean,
 ) {
   const assigneeId = c.assigneeId ?? null
+  const isMine = myAgentId !== null && assigneeId === myAgentId
   switch (status) {
+    case 'unassigned':
+      return c.status === 'open' && assigneeId === null
     case 'pending':
-      return c.status === 'open' && assigneeId === null && c.unreadCount > 0
+      if (c.status !== 'open') return false
+      return isAdmin ? assigneeId === null && c.unreadCount > 0 : isMine && c.unreadCount > 0
     case 'open_human':
       if (c.status !== 'open' || assigneeId === null) return false
-      return isAdmin || assigneeId === myAgentId
+      return isAdmin ? true : isMine && c.unreadCount === 0
     case 'resolved':
       return c.status === 'resolved'
   }
@@ -130,13 +134,16 @@ export function ConversationList({
     return true
   })
 
-  // Mismo criterio que el filtro "Sin contestar" — se reusa matchesStatus
-  // en vez de repetir la condición a mano, para que este contador (badge
-  // del botón "Filtros" y de la opción del menú) nunca quede desincronizado
-  // de lo que el filtro realmente muestra al hacer clic.
-  const pendingChatsCount = conversations.filter((c) =>
-    matchesStatus(c, 'pending', myAgentId, isAdmin),
-  ).length
+  // Un conteo por cada filtro de estado (no solo "Sin contestar") — reusa
+  // matchesStatus en vez de repetir la condición a mano, para que estos
+  // badges nunca queden desincronizados de lo que el filtro realmente
+  // muestra al hacer clic. El de "Sin contestar" es el que se muestra en el
+  // botón "Filtros" cerrado (el más urgente de vigilar); el resto solo se
+  // ve al abrir el menú.
+  const statusCounts = Object.fromEntries(
+    STATUS_FILTERS.map((f) => [f.key, conversations.filter((c) => matchesStatus(c, f.key, myAgentId, isAdmin)).length]),
+  ) as Record<StatusKey, number>
+  const pendingChatsCount = statusCounts.pending
 
   const activeFilterCount = (statusFilter ? 1 : 0) + categoryFilters.length
   const filterButtonLabel =
@@ -241,9 +248,9 @@ export function ConversationList({
                         <span className={cn('flex-1 truncate', statusFilter !== f.key && 'pl-[1.375rem]')}>
                           {f.label}
                         </span>
-                        {f.key === 'pending' && pendingChatsCount > 0 && (
+                        {statusCounts[f.key] > 0 && (
                           <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[0.6rem] font-normal text-muted-foreground">
-                            {pendingChatsCount}
+                            {statusCounts[f.key]}
                           </span>
                         )}
                       </button>

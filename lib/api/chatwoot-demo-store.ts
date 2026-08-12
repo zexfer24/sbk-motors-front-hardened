@@ -251,13 +251,12 @@ function seedConversations(): DemoConversation[] {
   ]
 }
 
+// Orden de llegada (más viejo arriba, los nuevos abajo) — mismo criterio
+// que sweepConversations en lib/api/chatwoot-sync.ts, para que el modo demo
+// (sin Chatwoot configurado) se comporte igual que producción.
 export function listConversations(): ChatwootConversation[] {
   return [...getStore()]
-    .sort((a, b) => {
-      const aTime = a.lastMessageAt ?? ""
-      const bTime = b.lastMessageAt ?? ""
-      return aTime < bTime ? 1 : -1
-    })
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
     .map((c) => ({ ...c, canWrite: true, labels: [] }))
 }
 
@@ -300,6 +299,21 @@ export function addMessage(
   conv.handledBy = "human"
 
   return msg
+}
+
+// No borra la fila, la marca como eliminada (mismo criterio que Chatwoot
+// real, ver el DELETE de messages/[messageId]/route.ts) — así el hueco
+// queda visible en el historial en vez de reordenar todo lo demás.
+export function deleteMessage(conversationId: string, messageId: string): boolean {
+  const store = getStore()
+  const conv = store.find((c) => c.id === conversationId)
+  if (!conv) return false
+  const msg = conv.messages.find((m) => m.id === messageId)
+  if (!msg) return false
+  msg.content = ""
+  msg.deleted = true
+  msg.attachments = []
+  return true
 }
 
 export function markAsRead(conversationId: string): void {

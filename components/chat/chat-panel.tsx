@@ -22,6 +22,7 @@ import type { ChatwootConversation, ChatwootMessage } from '@/lib/types/chatwoot
 import type { NewOrderDb } from '@/lib/types/order'
 import { MessageBubble } from '@/components/chat/message-bubble'
 import { CloseSaleModal } from '@/components/chat/close-sale-modal'
+import { ImagePreviewModal } from '@/components/chat/image-preview-modal'
 import { QuickRepliesManagerModal } from '@/components/chat/quick-replies-manager-modal'
 import { LabelsManagerModal } from '@/components/chat/labels-manager-modal'
 import { avatarColor } from '@/lib/avatar-color'
@@ -67,6 +68,7 @@ interface ChatPanelProps {
   onBack: () => void
   onSend: (text: string, inReplyTo?: string) => void
   onSendImage: (file: File, caption?: string, inReplyTo?: string) => Promise<void>
+  onDeleteMessage: (messageId: string) => Promise<{ error: string } | { ok: true }>
   onToggleIntervene: () => Promise<{ error: string } | { ok: true }>
   onAssign: (agentId: number | null) => Promise<{ error: string } | { ok: true }>
   onSetLabels: (labels: string[]) => Promise<{ error: string } | { ok: true }>
@@ -86,6 +88,7 @@ export function ChatPanel({
   onBack,
   onSend,
   onSendImage,
+  onDeleteMessage,
   onToggleIntervene,
   onAssign,
   onSetLabels,
@@ -98,6 +101,8 @@ export function ChatPanel({
   const [closeSaleOpen, setCloseSaleOpen] = useState(false)
   const [imageUploading, setImageUploading] = useState(false)
   const [imageError, setImageError] = useState<string | null>(null)
+  const [imagePreview, setImagePreview] = useState<{ file: File; url: string } | null>(null)
+  const [imageCaption, setImageCaption] = useState('')
   const [quickRepliesOpen, setQuickRepliesOpen] = useState(false)
   const [quickRepliesManagerOpen, setQuickRepliesManagerOpen] = useState(false)
   const [interveneLoading, setInterveneLoading] = useState(false)
@@ -239,6 +244,20 @@ export function ChatPanel({
     textareaRef.current?.focus()
   }
 
+  // Aviso explícito ANTES de confirmar: esto borra el mensaje de este panel
+  // (y de Chatwoot), pero si el cliente ya lo vio en WhatsApp lo sigue
+  // viendo ahí — ni Chatwoot ni la Cloud API de Meta exponen un "borrar para
+  // todos" remoto. Sin esto alguien podría pensar que borrarlo acá también
+  // lo retira del teléfono del cliente.
+  async function handleDeleteMessage(message: ChatwootMessage) {
+    const confirmed = window.confirm(
+      'Esto borra el mensaje de este panel. Si el cliente ya lo vio en WhatsApp, lo seguirá viendo ahí — no se puede retirar de su teléfono. ¿Borrar de todos modos?',
+    )
+    if (!confirmed) return
+    const result = await onDeleteMessage(message.id)
+    if ('error' in result) window.alert(result.error)
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     submitDraft()
@@ -346,13 +365,31 @@ export function ChatPanel({
     fileInputRef.current?.click()
   }
 
-  async function sendImageFile(file: File) {
+  // Abre la previsualización en vez de mandar directo — antes, pegar una
+  // captura de pantalla la enviaba de una, sin poder revisarla ni agregarle
+  // un pie de foto antes de que el cliente la viera.
+  function openImagePreview(file: File) {
     setImageError(null)
-    setImageUploading(true)
+    setImagePreview({ file, url: URL.createObjectURL(file) })
+    setImageCaption('')
+  }
+
+  function closeImagePreview() {
+    if (imagePreview) URL.revokeObjectURL(imagePreview.url)
+    setImagePreview(null)
+    setImageCaption('')
+    setImageError(null)
+  }
+
+  async function confirmSendImage() {
+    if (!imagePreview) return
     const inReplyTo = replyTarget?.id
     setReplyTarget(null)
+    setImageUploading(true)
+    setImageError(null)
     try {
-      await onSendImage(file, undefined, inReplyTo)
+      await onSendImage(imagePreview.file, imageCaption.trim() || undefined, inReplyTo)
+      closeImagePreview()
     } catch {
       setImageError('No se pudo enviar la imagen. Intenta de nuevo.')
     } finally {
@@ -364,13 +401,13 @@ export function ChatPanel({
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    await sendImageFile(file)
+    openImagePreview(file)
   }
 
   // Pegar una imagen copiada (captura de pantalla, "Copiar imagen" del
-  // navegador, etc.) manda directo por el mismo camino que adjuntar por el
-  // clip — sin esto, la única forma de mandar una imagen era guardarla a
-  // disco primero y elegirla con el picker de archivos.
+  // navegador, etc.) abre la misma previsualización — sin esto, la única
+  // forma de mandar una imagen era guardarla a disco primero y elegirla con
+  // el picker de archivos.
   function handleComposerPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
       i.type.startsWith('image/'),
@@ -378,7 +415,7 @@ export function ChatPanel({
     if (!item) return
     e.preventDefault()
     const file = item.getAsFile()
-    if (file) sendImageFile(file)
+    if (file) openImagePreview(file)
   }
 
   function insertQuickReply(content: string) {
@@ -671,6 +708,7 @@ export function ChatPanel({
               key={m.id}
               message={m}
               onReply={handleReply}
+              onDelete={handleDeleteMessage}
               replyPreview={m.inReplyTo ? messagesById.get(m.inReplyTo) ?? null : null}
             />
           ))
@@ -865,6 +903,18 @@ export function ChatPanel({
           </div>
         )}
       </div>
+
+      {imagePreview && (
+        <ImagePreviewModal
+          imageUrl={imagePreview.url}
+          caption={imageCaption}
+          onCaptionChange={setImageCaption}
+          sending={imageUploading}
+          error={imageError}
+          onCancel={closeImagePreview}
+          onConfirm={confirmSendImage}
+        />
+      )}
 
       <CloseSaleModal
         key={conversation.id}

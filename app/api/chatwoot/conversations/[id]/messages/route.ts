@@ -257,18 +257,25 @@ function mapChatwootMessage(raw: Record<string, unknown>): ChatwootMessage {
         ? String(sender.name)
         : null
 
+  // Chatwoot no borra la fila al eliminar un mensaje (DELETE de
+  // messages/[messageId]/route.ts) — vacía el contenido y los adjuntos, y
+  // marca esto en content_attributes. Sin detectarlo, se vería como una
+  // burbuja vacía en vez del aviso de "Mensaje eliminado".
+  const deleted = contentAttributes.deleted === true
+
   return {
     id: String(raw.id ?? ""),
-    content: String(raw.content ?? ""),
+    content: deleted ? "" : String(raw.content ?? ""),
     messageType: isIncoming ? "incoming" : isOutgoing ? "outgoing" : "activity",
     senderType,
     senderName,
     createdAt: raw.created_at
       ? new Date((raw.created_at as number) * 1000).toISOString()
       : new Date().toISOString(),
-    attachments: rawAttachments.map(mapChatwootAttachment),
+    attachments: deleted ? [] : rawAttachments.map(mapChatwootAttachment),
     status: mapMessageStatus(raw.status),
     inReplyTo: inReplyToRaw != null ? String(inReplyToRaw) : null,
+    deleted,
   }
 }
 
