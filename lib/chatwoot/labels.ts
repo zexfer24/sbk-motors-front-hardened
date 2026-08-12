@@ -5,12 +5,14 @@
 // administra en un solo lugar y queda visible también si alguien entra
 // directo al propio Chatwoot.
 // ============================================================================
-// Los nombres de campo del body de creación (title/color/description/
-// show_on_sidebar, sin envolver en un objeto padre) siguen la forma pública
-// documentada de la API de labels de Chatwoot. Conviene confirmarlos con una
-// creación de prueba contra la cuenta real antes de depender de esto a
-// ciegas en producción — si el body esperado resultara distinto, esta
-// función es el único lugar que hay que tocar.
+// Confirmado contra el código fuente de Chatwoot (Api::V1::Accounts::LabelsController):
+// create/update exigen el body envuelto en la clave "label"
+// (params.require(:label).permit(:title, :description, :color,
+// :show_on_sidebar)) — un body plano (como se mandaba antes acá) dispara
+// ActionController::ParameterMissing (400) del lado de Chatwoot, que es
+// justo el motivo por el que crear categorías no funcionaba. `fetch_label`
+// resuelve por id numérico (Current.account.labels.find(params[:id])), no
+// por título — coincide con el `id: number` que ya usa ChatwootLabel acá.
 // ============================================================================
 
 import { chatwootFetch } from "@/lib/chatwoot/client"
@@ -48,13 +50,37 @@ export async function createAccountLabel(input: {
   const data = await chatwootFetch<Record<string, unknown>>("/labels", {
     method: "POST",
     body: JSON.stringify({
-      title: input.title,
-      color: input.color,
-      description: input.description ?? "",
-      show_on_sidebar: true,
+      label: {
+        title: input.title,
+        color: input.color,
+        description: input.description ?? "",
+        show_on_sidebar: true,
+      },
     }),
   })
   return mapLabel(data)
+}
+
+export async function updateAccountLabel(
+  id: number,
+  input: { title: string; color: string; description?: string },
+): Promise<ChatwootLabel> {
+  const data = await chatwootFetch<Record<string, unknown>>(`/labels/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      label: {
+        title: input.title,
+        color: input.color,
+        description: input.description ?? "",
+        show_on_sidebar: true,
+      },
+    }),
+  })
+  return mapLabel(data)
+}
+
+export async function deleteAccountLabel(id: number): Promise<void> {
+  await chatwootFetch(`/labels/${id}`, { method: "DELETE" })
 }
 
 // Chatwoot devuelve/recibe las labels de una conversación como una lista de

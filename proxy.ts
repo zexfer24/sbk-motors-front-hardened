@@ -96,6 +96,7 @@ function isAdminOnlyApi(pathname: string, method: string): boolean {
   // guardConversationWrite), pero crear una categoría nueva es admin-only —
   // es contenido compartido por toda la empresa, igual que quick-replies.
   if (pathname === "/api/chatwoot/labels" && method !== "GET") return true
+  if (/^\/api\/chatwoot\/labels\/[^/]+$/.test(pathname)) return true
   return false
 }
 

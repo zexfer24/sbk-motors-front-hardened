@@ -50,6 +50,8 @@ export function ChatView({ active }: ChatViewProps) {
     labels: labelCatalog,
     loading: labelCatalogLoading,
     create: createLabel,
+    update: updateLabel,
+    remove: removeLabel,
   } = useLabels()
 
   const [showConversationOnMobile, setShowConversationOnMobile] = useState(false)
@@ -212,6 +214,8 @@ export function ChatView({ active }: ChatViewProps) {
               labelCatalog={labelCatalog}
               labelCatalogLoading={labelCatalogLoading}
               onCreateLabel={createLabel}
+              onUpdateLabel={updateLabel}
+              onDeleteLabel={removeLabel}
               onCloseSale={closeSale}
             />
           ) : (

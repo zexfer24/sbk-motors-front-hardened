@@ -235,6 +235,25 @@ export async function createLabel(input: { title: string; color: string }): Prom
   return res.json()
 }
 
+// admin-only — edita/borra una categoría del catálogo de la cuenta.
+export async function updateLabel(
+  id: number,
+  input: { title: string; color: string },
+): Promise<ChatwootLabel> {
+  const res = await fetch(`${baseUrl()}/api/chatwoot/labels/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error("No se pudo editar la categoría.")
+  return res.json()
+}
+
+export async function deleteLabel(id: number): Promise<void> {
+  const res = await fetch(`${baseUrl()}/api/chatwoot/labels/${id}`, { method: "DELETE" })
+  if (!res.ok) throw new Error("No se pudo borrar la categoría.")
+}
+
 // Reemplaza el set completo de etiquetas de una conversación.
 export async function setConversationLabels(
   conversationId: string,

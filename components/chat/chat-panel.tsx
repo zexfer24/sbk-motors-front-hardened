@@ -75,6 +75,8 @@ interface ChatPanelProps {
   labelCatalog: ChatwootLabel[]
   labelCatalogLoading: boolean
   onCreateLabel: (input: { title: string; color: string }) => Promise<ChatwootLabel | { error: string }>
+  onUpdateLabel: (id: number, input: { title: string; color: string }) => Promise<ChatwootLabel | { error: string }>
+  onDeleteLabel: (id: number) => Promise<{ error: string } | { ok: true }>
   onCloseSale: (input: NewOrderDb) => Promise<{ error: string } | { ok: true }>
 }
 
@@ -95,6 +97,8 @@ export function ChatPanel({
   labelCatalog,
   labelCatalogLoading,
   onCreateLabel,
+  onUpdateLabel,
+  onDeleteLabel,
   onCloseSale,
 }: ChatPanelProps) {
   const [draft, setDraft] = useState('')
@@ -941,6 +945,8 @@ export function ChatPanel({
         loading={labelCatalogLoading}
         onClose={() => setLabelsManagerOpen(false)}
         onCreate={onCreateLabel}
+        onUpdate={onUpdateLabel}
+        onDelete={onDeleteLabel}
       />
     </section>
   )

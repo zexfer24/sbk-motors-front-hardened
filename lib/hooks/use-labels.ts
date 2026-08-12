@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { createLabel, fetchLabels, type ChatwootLabel } from "@/lib/api/chatwoot"
+import { createLabel, deleteLabel, fetchLabels, updateLabel, type ChatwootLabel } from "@/lib/api/chatwoot"
 
 // Catálogo de categorías (labels de Chatwoot) — se carga una vez al montar
 // (cambia poco) y se refresca en memoria al crear una nueva, sin necesidad
@@ -37,5 +37,25 @@ export function useLabels() {
     }
   }, [])
 
-  return { labels, loading, error, reload: load, create }
+  const update = useCallback(async (id: number, input: { title: string; color: string }) => {
+    try {
+      const label = await updateLabel(id, input)
+      setLabels((prev) => prev.map((l) => (l.id === id ? label : l)))
+      return label
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "No se pudo editar la categoría." }
+    }
+  }, [])
+
+  const remove = useCallback(async (id: number) => {
+    try {
+      await deleteLabel(id)
+      setLabels((prev) => prev.filter((l) => l.id !== id))
+      return { ok: true as const }
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "No se pudo borrar la categoría." }
+    }
+  }, [])
+
+  return { labels, loading, error, reload: load, create, update, remove }
 }

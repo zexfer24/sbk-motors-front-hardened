@@ -1,8 +1,9 @@
 'use client'
 
 import { useId, useState } from 'react'
-import { Loader2, Plus, Tag, X } from 'lucide-react'
+import { Loader2, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
 import type { ChatwootLabel } from '@/lib/api/chatwoot'
+import { cn } from '@/lib/utils'
 
 interface LabelsManagerModalProps {
   open: boolean
@@ -10,39 +11,81 @@ interface LabelsManagerModalProps {
   loading: boolean
   onClose: () => void
   onCreate: (input: { title: string; color: string }) => Promise<ChatwootLabel | { error: string }>
+  onUpdate: (id: number, input: { title: string; color: string }) => Promise<ChatwootLabel | { error: string }>
+  onDelete: (id: number) => Promise<{ error: string } | { ok: true }>
 }
 
 const DEFAULT_COLOR = '#e0555c'
 
-// Admin-only (ver proxy.ts): crea categorías nuevas en el catálogo de
-// etiquetas de Chatwoot. A diferencia de las respuestas rápidas, no hay
-// edición/borrado acá a propósito — son las labels nativas de la cuenta, y
-// renombrarlas/borrarlas desde acá sin más contexto podría descuadrar
-// reportes o automatizaciones ya armadas del lado de Chatwoot.
-export function LabelsManagerModal({ open, labels, loading, onClose, onCreate }: LabelsManagerModalProps) {
+// Admin-only (ver proxy.ts) — administra el catálogo de etiquetas nativas de
+// Chatwoot: crear, editar (nombre/color) y borrar. El mismo formulario sirve
+// para crear y editar — entrar en "modo edición" precarga el título/color
+// de la categoría elegida en vez de duplicar el form.
+export function LabelsManagerModal({
+  open,
+  labels,
+  loading,
+  onClose,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: LabelsManagerModalProps) {
   const formId = useId()
+  const [editingId, setEditingId] = useState<number | null>(null)
   const [title, setTitle] = useState('')
   const [color, setColor] = useState(DEFAULT_COLOR)
-  const [creating, setCreating] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
 
   if (!open) return null
 
-  async function handleCreate(e: React.FormEvent) {
+  function resetForm() {
+    setEditingId(null)
+    setTitle('')
+    setColor(DEFAULT_COLOR)
+    setFormError(null)
+  }
+
+  function startEdit(label: ChatwootLabel) {
+    setEditingId(label.id)
+    setTitle(label.title)
+    setColor(label.color)
+    setFormError(null)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) {
       setFormError('Escribe un nombre para la categoría.')
       return
     }
-    setCreating(true)
+    setSaving(true)
     setFormError(null)
-    const result = await onCreate({ title: title.trim(), color })
-    setCreating(false)
+    const result = editingId
+      ? await onUpdate(editingId, { title: title.trim(), color })
+      : await onCreate({ title: title.trim(), color })
+    setSaving(false)
     if ('error' in result) {
       setFormError(result.error)
       return
     }
-    setTitle('')
+    resetForm()
+  }
+
+  async function handleDelete(label: ChatwootLabel) {
+    const confirmed = window.confirm(
+      `¿Borrar la categoría "${label.title}"? Se quita de cualquier conversación que la tenga.`,
+    )
+    if (!confirmed) return
+    setDeletingId(label.id)
+    const result = await onDelete(label.id)
+    setDeletingId(null)
+    if ('error' in result) {
+      setFormError(result.error)
+      return
+    }
+    if (editingId === label.id) resetForm()
   }
 
   return (
@@ -90,22 +133,48 @@ export function LabelsManagerModal({ open, labels, loading, onClose, onCreate }:
               Todavía no hay categorías — agrega la primera abajo.
             </p>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col gap-1.5">
               {labels.map((l) => (
-                <span
+                <div
                   key={l.id}
-                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
-                  style={{ borderColor: `${l.color}66`, color: l.color, backgroundColor: `${l.color}1a` }}
+                  className={cn(
+                    'group flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors',
+                    editingId === l.id ? 'border-primary/50 bg-primary/5' : 'border-border',
+                  )}
                 >
-                  <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: l.color }} />
-                  {l.title}
-                </span>
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: l.color }} />
+                  <span className="flex-1 truncate text-sm text-foreground">{l.title}</span>
+                  <button
+                    type="button"
+                    onClick={() => startEdit(l)}
+                    disabled={deletingId === l.id}
+                    aria-label={`Editar categoría ${l.title}`}
+                    className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground group-hover:opacity-100 disabled:opacity-50"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(l)}
+                    disabled={deletingId === l.id}
+                    aria-label={`Borrar categoría ${l.title}`}
+                    className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-primary/10 hover:text-primary group-hover:opacity-100 disabled:opacity-50"
+                  >
+                    {deletingId === l.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
               ))}
             </div>
           )}
 
-          <form onSubmit={handleCreate} className="flex flex-col gap-2 border-t border-border pt-4">
-            <span className="text-xs font-semibold text-muted-foreground">Nueva categoría</span>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-t border-border pt-4">
+            <span className="text-xs font-semibold text-muted-foreground">
+              {editingId ? 'Editar categoría' : 'Nueva categoría'}
+            </span>
             <div className="flex items-center gap-2">
               <input
                 type="color"
@@ -128,14 +197,32 @@ export function LabelsManagerModal({ open, labels, loading, onClose, onCreate }:
               </p>
             )}
 
-            <button
-              type="submit"
-              disabled={creating}
-              className="power-glow flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-transform active:scale-95 disabled:opacity-60"
-            >
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              Agregar
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                disabled={saving}
+                className="power-glow flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-transform active:scale-95 disabled:opacity-60"
+              >
+                {saving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : editingId ? (
+                  <Pencil className="h-4 w-4" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                {editingId ? 'Guardar cambios' : 'Agregar'}
+              </button>
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  disabled={saving}
+                  className="rounded-lg px-4 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
           </form>
         </div>
       </div>
