@@ -54,20 +54,21 @@ const SORT_OPTIONS: { key: SortOrder; label: string; icon: typeof ArrowUpNarrowW
 ]
 
 // Reglas del negocio (2026-08-12, corregida 2026-08-13, personalizada por
-// asesor 2026-08-12):
-//   "Sin contestar" y "Abiertas" son privados por perfil para un ASESOR —
-//     cada uno ve ahí solo lo que tiene asignado A ÉL, partido según si
-//     tiene mensajes nuevos sin atender o no:
-//       - "Sin contestar" (asesor) = asignada a mí Y con mensajes sin leer.
-//       - "Abiertas" (asesor)      = asignada a mí Y ya al día (sin leer = 0).
-//     Un asesor sin agente de Chatwoot vinculado (myAgentId null) no puede
-//     "tener" nada asignado — sin la comprobación explícita de myAgentId,
+// asesor 2026-08-12, corregida de nuevo 2026-08-12 — "Sin contestar" NO es
+// lo sin asignar, es lo YA asignado que nadie contestó todavía):
+//   "Sin contestar" y "Abiertas" son EXCLUYENTES entre sí y solo cubren
+//     conversaciones YA ASIGNADAS (a alguien) — lo sin asignar vive aparte,
+//     en "Libres". Se parten según si tienen mensajes nuevos sin atender:
+//       - "Sin contestar" = asignada (a quien sea) Y con mensajes sin leer.
+//       - "Abiertas"      = asignada (a quien sea) Y ya al día (sin leer = 0).
+//     Para un ASESOR, "a quien sea" se reduce a "a mí" — cada uno ve ahí
+//     solo lo suyo. Para el ADMIN (supervisor), es "a cualquiera" — ve el
+//     estado de TODO el equipo en ambos tabs, no solo lo sin asignar como
+//     antes (eso ya lo cubre "Libres" aparte, ver más abajo). Un asesor sin
+//     agente de Chatwoot vinculado (myAgentId null) no puede "tener" nada
+//     asignado — sin la comprobación explícita de myAgentId,
 //     `assigneeId === myAgentId` sería `null === null` y le mostraría TODO
 //     lo sin asignar como si fuera suyo.
-//   El admin ve ambos tabs igual que antes (vista de supervisor, sin
-//     personalizar): "Sin contestar" = sin asignar y sin leer (cola global
-//     de lo que nadie tomó todavía), "Abiertas" = cualquier conversación
-//     abierta y asignada, sea de quien sea.
 //   "Libres" (nuevo, corregida 2026-08-12) — abierta, SIN asignar Y con
 //     mensajes sin leer (no cualquier chat sin asignar — eso ya lo cubre
 //     "Todos", que muestra todo sin filtrar). Sin exigir sin leer, "Libres"
@@ -95,11 +96,11 @@ function matchesStatus(
     case 'unassigned':
       return c.status === 'open' && assigneeId === null && c.unreadCount > 0
     case 'pending':
-      if (c.status !== 'open') return false
-      return isAdmin ? assigneeId === null && c.unreadCount > 0 : isMine && c.unreadCount > 0
+      if (c.status !== 'open' || assigneeId === null) return false
+      return (isAdmin || isMine) && c.unreadCount > 0
     case 'open_human':
       if (c.status !== 'open' || assigneeId === null) return false
-      return isAdmin ? true : isMine && c.unreadCount === 0
+      return (isAdmin || isMine) && c.unreadCount === 0
     case 'resolved':
       return c.status === 'resolved'
   }
