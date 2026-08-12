@@ -35,6 +35,23 @@ import { useAuth } from "@/lib/hooks/use-auth"
 // conexión SSE se cae y tarda en reconectar.
 const FALLBACK_POLL_MS = 45_000
 
+// El nombre real del agente de Chatwoot (ej. "Jose Riera") no está
+// disponible acá sin un fetch extra (fetchAgents es admin-only y ni así
+// resuelve el de uno mismo si no es admin) — se deriva uno legible del
+// correo de sesión ("jose.riera@sbkmotors.com" -> "Jose Riera") para las
+// notas de sistema de `toggle()` más abajo, en vez de mostrar el correo
+// crudo o quedarse sin nombre.
+function displayNameFromEmail(email: string): string {
+  const local = email.split("@")[0] || email
+  return (
+    local
+      .split(/[._-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ") || email
+  )
+}
+
 export function useChatwoot(active: boolean = true) {
   // Solo para poder calcular el mismo `canWrite` que ya deriva el servidor
   // (ver app/api/chatwoot/conversations/route.ts) en el optimistic update
@@ -361,6 +378,36 @@ export function useChatwoot(active: boolean = true) {
           : c,
       ),
     )
+
+    // Aviso en el propio historial del chat de quién tomó/soltó el control
+    // — Chatwoot genera uno nativo para esto, pero siempre atribuido al
+    // dueño del token compartido (nunca a quien de verdad hizo clic acá),
+    // así que se oculta en la ruta GET de mensajes (ver ese comentario) y
+    // se reemplaza por este, 100% local: no se manda a Chatwoot como
+    // mensaje real porque el listado de conversaciones toma el ÚLTIMO
+    // mensaje de la conversación como vista previa — mandar esto ahí
+    // pisaría el último mensaje real del cliente en la lista. Efecto
+    // secundario aceptado: solo lo ve quien hizo la acción, en esta sesión,
+    // y desaparece si se recarga el historial completo desde Chatwoot.
+    const wasMine = current?.assigneeId != null && myAgentId !== null && current.assigneeId === myAgentId
+    const actorName = user?.email ? displayNameFromEmail(user.email) : "Alguien"
+    const releasedName = current?.assigneeName ?? actorName
+    const systemMessageId = `system-${Date.now()}`
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: systemMessageId,
+        content: newState
+          ? `"${actorName}" auto-asignado a esta conversación`
+          : `"${releasedName}" fue desasignado por ${wasMine ? "Sistema" : actorName}`,
+        messageType: "system",
+        senderType: "human",
+        senderName: null,
+        createdAt: new Date().toISOString(),
+        attachments: [],
+      },
+    ])
+
     try {
       await toggleIntervention(activeId, newState)
       return { ok: true }
@@ -370,6 +417,7 @@ export function useChatwoot(active: boolean = true) {
           prev.map((c) => (c.id === activeId ? { ...c, ...prevSnapshot } : c)),
         )
       }
+      setMessages((prev) => prev.filter((m) => m.id !== systemMessageId))
       return { error: err instanceof Error ? err.message : "No se pudo cambiar el estado." }
     }
   }, [activeId, conversations, user])

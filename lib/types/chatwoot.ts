@@ -13,7 +13,7 @@ export interface ChatwootAttachment {
 export interface ChatwootMessage {
   id: string
   content: string
-  messageType: "incoming" | "outgoing" | "activity"
+  messageType: "incoming" | "outgoing" | "activity" | "system"
   senderType: SenderType
   senderName: string | null
   createdAt: string

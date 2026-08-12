@@ -283,7 +283,15 @@ export function ChatPanel({
     setInterveneLoading(true)
     try {
       const result = await onToggleIntervene()
-      if ('error' in result) setInterveneError(result.error)
+      if ('error' in result) {
+        setInterveneError(result.error)
+      } else {
+        // No depender solo del efecto de foco automático (que reacciona a
+        // conversation.canWrite/withinWhatsappWindow) — acá se sabe con
+        // certeza que la intervención surtió efecto y el compositor ya
+        // está montado, así que se enfoca directo.
+        requestAnimationFrame(() => textareaRef.current?.focus())
+      }
     } finally {
       setInterveneLoading(false)
     }

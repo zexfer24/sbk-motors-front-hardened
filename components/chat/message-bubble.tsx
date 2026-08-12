@@ -73,6 +73,20 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message, replyPreview, onReply }: MessageBubbleProps) {
+  // Notas de sistema (tomar/soltar intervención) — sintéticas y locales a
+  // esta sesión, no vienen de Chatwoot (ver toggle() en use-chatwoot.ts para
+  // el motivo). Se muestran centradas como aviso, nunca como burbuja de
+  // chat, para no confundirlas con algo que alguien realmente escribió.
+  if (message.messageType === 'system') {
+    return (
+      <div className="flex w-full justify-center">
+        <span className="rounded-full bg-secondary/70 px-3 py-1 text-center text-[0.7rem] text-muted-foreground">
+          {message.content}
+        </span>
+      </div>
+    )
+  }
+
   const isCustomer = message.messageType === 'incoming'
   const isAi = message.senderType === 'ai'
   const isHuman = message.senderType === 'human'
