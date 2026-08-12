@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 import { getConversation, addMessage } from "@/lib/api/chatwoot-demo-store"
 import { getChatwootAgentName, getChatwootConfig, chatwootFetch, chatwootFetchForm } from "@/lib/chatwoot/client"
-import type { NewMessageInput } from "@/lib/types/chatwoot"
+import { listSystemEvents } from "@/lib/api/chat-system-events"
+import type { ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
 import { guardConversationRead, guardConversationWrite, callerAgentId } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -37,7 +38,11 @@ export async function GET(request: Request, { params }: RouteContext) {
       // sería mentir sobre quién hizo qué, así que se ocultan del hilo en
       // vez de arriesgarse a esa atribución incorrecta.
       const messages = data.payload.map(mapChatwootMessage).filter((m) => m.messageType !== "activity")
-      return NextResponse.json({ messages, source: "chatwoot" })
+      // Solo en la tanda inicial (before === null) — al pedir historial más
+      // viejo ("cargar más") estas notas ya se mandaron con la primera
+      // tanda, agregarlas de nuevo acá las duplicaría en pantalla.
+      const combined = before ? messages : mergeSystemEvents(messages, await listSystemEvents(id))
+      return NextResponse.json({ messages: combined, source: "chatwoot" })
     } catch {
       return NextResponse.json(
         { error: "error_chatwoot" },
@@ -50,7 +55,33 @@ export async function GET(request: Request, { params }: RouteContext) {
   if (!conv) {
     return NextResponse.json({ error: "no_encontrado" }, { status: 404 })
   }
-  return NextResponse.json({ messages: conv.messages, source: "demo" })
+  const combined = before
+    ? conv.messages
+    : mergeSystemEvents(conv.messages, await listSystemEvents(id))
+  return NextResponse.json({ messages: combined, source: "demo" })
+}
+
+// Intercala las notas de "tomó/soltó la conversación" (ver
+// lib/api/chat-system-events.ts) entre los mensajes reales, ordenadas por
+// fecha — para que aparezcan en el punto del historial en que realmente
+// pasaron, no todas al final.
+function mergeSystemEvents(
+  messages: ChatwootMessage[],
+  events: { content: string; createdAt: string }[],
+): ChatwootMessage[] {
+  if (events.length === 0) return messages
+  const systemMessages: ChatwootMessage[] = events.map((e, i) => ({
+    id: `system-${e.createdAt}-${i}`,
+    content: e.content,
+    messageType: "system",
+    senderType: "human",
+    senderName: null,
+    createdAt: e.createdAt,
+    attachments: [],
+  }))
+  return [...messages, ...systemMessages].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  )
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
@@ -189,7 +220,7 @@ async function handleAttachmentUpload(request: Request, id: string) {
   }
 }
 
-function mapChatwootMessage(raw: Record<string, unknown>) {
+function mapChatwootMessage(raw: Record<string, unknown>): ChatwootMessage {
   const sender = (raw.sender as Record<string, unknown>) ?? {}
   const msgType = String(raw.message_type ?? "0")
   const isIncoming = msgType === "0"
