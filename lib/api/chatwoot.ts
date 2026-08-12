@@ -149,6 +149,17 @@ export async function markConversationRead(conversationId: string): Promise<void
   if (!res.ok) throw new Error("No se pudo marcar como leída")
 }
 
+// Contraparte de markConversationRead — para devolver a mano una
+// conversación al tab "Sin contestar" sin esperar a que llegue un mensaje
+// nuevo de verdad.
+export async function markConversationUnread(conversationId: string): Promise<void> {
+  const res = await fetch(
+    `${baseUrl()}/api/chatwoot/conversations/${conversationId}/unread`,
+    { method: "POST" },
+  )
+  if (!res.ok) throw new Error("No se pudo marcar como no leída")
+}
+
 export interface Agent {
   email: string
   role: "admin" | "asesor"

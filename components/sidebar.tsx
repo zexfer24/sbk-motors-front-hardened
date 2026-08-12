@@ -9,13 +9,14 @@ import {
   LogOut,
   MessageCircle,
   Receipt,
+  Settings2,
   Users,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { motion } from 'framer-motion'
 
-export type View = 'panel' | 'chat' | 'clientes' | 'inventario' | 'ventas'
+export type View = 'panel' | 'chat' | 'clientes' | 'inventario' | 'ventas' | 'ajustes'
 
 interface NavItem {
   id: View
@@ -181,6 +182,21 @@ export function Sidebar({ active, onNavigate, allowedViews, userEmail, onSignOut
         >
           <span className="truncate">{userEmail}</span>
         </div>
+
+        <button
+          type="button"
+          onClick={() => onNavigate('ajustes')}
+          aria-current={active === 'ajustes' ? 'page' : undefined}
+          title="Ajustes"
+          className={cn(
+            'flex w-full items-center justify-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-foreground',
+            active === 'ajustes' ? 'text-foreground' : 'text-muted-foreground',
+            !collapsed && 'lg:justify-start',
+          )}
+        >
+          <Settings2 className="h-5 w-5 shrink-0" strokeWidth={2} />
+          <span className={cn('hidden', !collapsed && 'lg:inline')}>Ajustes</span>
+        </button>
 
         <button
           type="button"

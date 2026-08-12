@@ -7,6 +7,7 @@ import {
   fetchConversations,
   fetchMessages,
   markConversationRead,
+  markConversationUnread,
   sendImageMessage,
   sendMessage,
   setConversationLabels,
@@ -283,6 +284,29 @@ export function useChatwoot(active: boolean = true) {
     [activeId],
   )
 
+  // Contraparte a mano del efecto de arriba que marca leído automático al
+  // seleccionar — sirve para devolver un chat al tab "Sin contestar" sin
+  // esperar un mensaje nuevo de verdad. Optimista como el resto de las
+  // acciones de este hook: si falla, un `loadConversations` normal en el
+  // próximo evento/polling corrige el número real.
+  const markUnread = useCallback(
+    async (id: string): Promise<{ error: string } | { ok: true }> => {
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, unreadCount: Math.max(c.unreadCount, 1) } : c)),
+      )
+      try {
+        await markConversationUnread(id)
+        return { ok: true }
+      } catch (err) {
+        await loadConversations({ silent: true })
+        return {
+          error: err instanceof Error ? err.message : "No se pudo marcar como no leída.",
+        }
+      }
+    },
+    [loadConversations],
+  )
+
   const toggle = useCallback(async (): Promise<{ error: string } | { ok: true }> => {
     if (!activeId) return { error: "No hay conversación seleccionada." }
     const wasHuman = conversations.find((c) => c.id === activeId)?.handledBy === "human"
@@ -405,6 +429,7 @@ export function useChatwoot(active: boolean = true) {
     selectConversation,
     send,
     sendImage,
+    markUnread,
     toggle,
     assign,
     setLabels,

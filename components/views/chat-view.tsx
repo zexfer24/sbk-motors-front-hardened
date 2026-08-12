@@ -32,6 +32,7 @@ export function ChatView({ active }: ChatViewProps) {
     selectConversation,
     send,
     sendImage,
+    markUnread,
     toggle,
     assign,
     setLabels,
@@ -180,6 +181,7 @@ export function ChatView({ active }: ChatViewProps) {
             activeId={activeId}
             onSelect={handleSelect}
             onNewChat={() => setNewChatOpen(true)}
+            onMarkUnread={markUnread}
             labelCatalog={labelCatalog}
             labelCatalogLoading={labelCatalogLoading}
           />

@@ -117,6 +117,104 @@
   --sidebar-accent-foreground: oklch(0.96 0.004 270);
   --sidebar-border: oklch(0.3 0.012 25 / 60%);
   --sidebar-ring: oklch(0.58 0.22 25);
+
+  /* Variables de EFECTOS que antes vivían hardcodeadas directo en las
+     reglas de abajo (fondo del body, selección, scrollbar, skeleton, el
+     "glow" de los botones de poder y el brillo que barre los skeletons) —
+     movidas acá para que el tema claro (bloque .light más abajo) pueda
+     darles su propio valor. Los números son EXACTAMENTE los que ya estaban
+     hardcodeados, cero cambio visual en oscuro. */
+  --glow-1: oklch(0.58 0.22 25 / 0.12);
+  --glow-2: oklch(0.58 0.22 25 / 0.08);
+  --selection-bg: oklch(0.58 0.22 25 / 0.35);
+  --scrollbar-thumb: oklch(0.4 0.14 25 / 0.6);
+  --scrollbar-thumb-hover: oklch(0.58 0.22 25 / 0.75);
+  --skeleton-base: oklch(0.22 0.012 25 / 0.7);
+  --skeleton-shine: oklch(0.32 0.02 25 / 0.9);
+  --power-glow-rest: oklch(0.58 0.22 25 / 0.55);
+  --power-glow-peak: oklch(0.58 0.22 25 / 0.7);
+  --sheen-color: oklch(1 0 0 / 0.08);
+}
+
+/* Tema claro — misma identidad "crimson/taller" (mismo hue 25 del rojo de
+   freno, mismos hue de éxito/alerta/no-leído), pero pensada para que un
+   fondo claro no canse la vista en turnos largos:
+     - Fondo marfil tenue (L 0.97), no blanco puro — un blanco #fff a pantalla
+       completa da más glare que un fondo ligerísimamente cálido.
+     - Texto casi-negro cálido (L 0.21), no negro puro — el máximo contraste
+       posible (negro puro sobre blanco puro) es el que más fatiga en uso
+       prolongado; se prioriza contraste suficiente (AA) sobre contraste
+       máximo.
+     - El rojo primario baja un poco de luminosidad (0.58 → 0.52) para no
+       lavarse contra el fondo claro, manteniendo el mismo matiz y casi el
+       mismo croma — sigue siendo la misma marca, solo calibrado para el
+       fondo opuesto.
+     - success/warning/unread se oscurecen bastante más que en oscuro:
+       en oscuro son TEXTO sobre fondo casi negro (necesitan ser claros);
+       acá son texto sobre fondo casi blanco (necesitan ser oscuros) para
+       seguir pasando contraste — el hue de cada uno no cambia. */
+.light {
+  color-scheme: light;
+  --background: oklch(0.97 0.006 25);
+  --foreground: oklch(0.21 0.014 25);
+
+  --card: oklch(0.995 0.003 25);
+  --card-foreground: oklch(0.21 0.014 25);
+  --popover: oklch(0.995 0.003 25);
+  --popover-foreground: oklch(0.21 0.014 25);
+
+  --primary: oklch(0.52 0.2 25);
+  --primary-foreground: oklch(0.99 0.005 25);
+
+  --secondary: oklch(0.94 0.008 25);
+  --secondary-foreground: oklch(0.21 0.014 25);
+
+  --muted: oklch(0.93 0.008 25);
+  --muted-foreground: oklch(0.4 0.014 25);
+
+  --accent: oklch(0.52 0.2 25);
+  --accent-foreground: oklch(0.99 0.005 25);
+
+  --destructive: oklch(0.52 0.2 25);
+
+  --success: oklch(0.44 0.14 150);
+  --warning: oklch(0.46 0.15 75);
+  --unread: oklch(0.42 0.15 165);
+  --metal: oklch(0.55 0.012 260);
+
+  --border: oklch(0.87 0.012 25 / 70%);
+  --input: oklch(0.91 0.01 25 / 70%);
+  --ring: oklch(0.52 0.2 25);
+
+  --chart-1: oklch(0.52 0.2 25);
+  --chart-2: oklch(0.44 0.14 150);
+  --chart-3: oklch(0.46 0.15 75);
+  --chart-4: oklch(0.55 0.012 260);
+  --chart-5: oklch(0.62 0.13 25);
+
+  --sidebar: oklch(0.955 0.007 25);
+  --sidebar-foreground: oklch(0.32 0.014 25);
+  --sidebar-primary: oklch(0.52 0.2 25);
+  --sidebar-primary-foreground: oklch(0.99 0.005 25);
+  --sidebar-accent: oklch(0.9 0.01 25);
+  --sidebar-accent-foreground: oklch(0.21 0.014 25);
+  --sidebar-border: oklch(0.85 0.012 25 / 60%);
+  --sidebar-ring: oklch(0.52 0.2 25);
+
+  /* Mismos efectos que en oscuro, mucho más suaves — un glow rojo al 12%
+     de opacidad se ve "moody" sobre casi-negro; el mismo 12% sobre
+     casi-blanco se ve una mancha rosada. Se les baja la opacidad, no el
+     matiz. */
+  --glow-1: oklch(0.58 0.22 25 / 0.05);
+  --glow-2: oklch(0.58 0.22 25 / 0.03);
+  --selection-bg: oklch(0.58 0.22 25 / 0.22);
+  --scrollbar-thumb: oklch(0.7 0.05 25 / 0.5);
+  --scrollbar-thumb-hover: oklch(0.52 0.2 25 / 0.6);
+  --skeleton-base: oklch(0.9 0.01 25 / 0.7);
+  --skeleton-shine: oklch(0.97 0.006 25 / 0.95);
+  --power-glow-rest: oklch(0.52 0.2 25 / 0.28);
+  --power-glow-peak: oklch(0.52 0.2 25 / 0.4);
+  --sheen-color: oklch(0.52 0.2 25 / 0.06);
 }
 
 @layer base {
@@ -128,12 +226,12 @@
     background-image:
       radial-gradient(
         ellipse 80% 60% at 15% -10%,
-        oklch(0.58 0.22 25 / 0.12),
+        var(--glow-1),
         transparent 60%
       ),
       radial-gradient(
         ellipse 70% 50% at 100% 0%,
-        oklch(0.58 0.22 25 / 0.08),
+        var(--glow-2),
         transparent 55%
       ),
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
@@ -145,13 +243,13 @@
   }
 
   ::selection {
-    background: oklch(0.58 0.22 25 / 0.35);
+    background: var(--selection-bg);
     color: var(--foreground);
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: oklch(0.4 0.14 25 / 0.6) transparent;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
   }
   ::-webkit-scrollbar {
     width: 10px;
@@ -161,13 +259,13 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background-color: oklch(0.4 0.14 25 / 0.6);
+    background-color: var(--scrollbar-thumb);
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background-color: oklch(0.58 0.22 25 / 0.75);
+    background-color: var(--scrollbar-thumb-hover);
     background-clip: padding-box;
   }
 }
@@ -286,10 +384,10 @@
 @keyframes power-pulse {
   0%,
   100% {
-    box-shadow: 0 0 18px 0 oklch(0.58 0.22 25 / 0.55);
+    box-shadow: 0 0 18px 0 var(--power-glow-rest);
   }
   50% {
-    box-shadow: 0 0 28px 4px oklch(0.58 0.22 25 / 0.7);
+    box-shadow: 0 0 28px 4px var(--power-glow-peak);
   }
 }
 
@@ -298,7 +396,7 @@
 }
 
 .power-glow {
-  box-shadow: 0 0 18px 0 oklch(0.58 0.22 25 / 0.5);
+  box-shadow: 0 0 18px 0 var(--power-glow-rest);
 }
 .power-glow:hover {
   animation: power-pulse 1.4s ease-in-out infinite;
@@ -316,9 +414,9 @@
 .skeleton {
   background-image: linear-gradient(
     100deg,
-    oklch(0.22 0.012 25 / 0.7) 30%,
-    oklch(0.32 0.02 25 / 0.9) 50%,
-    oklch(0.22 0.012 25 / 0.7) 70%
+    var(--skeleton-base) 30%,
+    var(--skeleton-shine) 50%,
+    var(--skeleton-base) 70%
   );
   background-size: 250% 100%;
   animation: shimmer 1.8s ease-in-out infinite;
@@ -341,7 +439,7 @@
   background: linear-gradient(
     90deg,
     transparent,
-    oklch(1 0 0 / 0.08),
+    var(--sheen-color),
     transparent
   );
   animation: sheen-sweep 3.2s ease-in-out infinite;

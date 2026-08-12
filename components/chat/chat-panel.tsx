@@ -192,8 +192,22 @@ export function ChatPanel({
 
   // Foco automático al entrar a una conversación distinta — así se puede
   // empezar a escribir de una vez, sin tener que hacer clic en el input.
+  // El focus() se difiere a un frame (rAF) en vez de llamarse directo acá:
+  // en el mismo render en que cambia `conversation` también puede estar
+  // terminando de aplicarse la transición de pestañas de app/page.tsx
+  // (opacidad/transform) o el layout todavía se está acomodando — pedirle
+  // foco al elemento en ese instante podía perderse. Un frame más tarde el
+  // layout ya está asentado.
+  //
+  // Ojo: si la ventana de 24h de WhatsApp está cerrada, el textarea de más
+  // abajo queda `disabled` — un input deshabilitado NO puede recibir foco
+  // (lo bloquea el navegador, no esto), así que en esos chats no hay nada
+  // que enfocar todavía cuando se entra. Es esperable: tampoco se podría
+  // escribir ahí.
   useEffect(() => {
-    if (conversation.canWrite) textareaRef.current?.focus()
+    if (!conversation.canWrite) return
+    const frame = requestAnimationFrame(() => textareaRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
   }, [conversation.id, conversation.canWrite])
 
   // Ventana de 24h de WhatsApp: se recalcula en cada render a partir del

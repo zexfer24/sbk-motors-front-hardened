@@ -307,3 +307,9 @@ export function markAsRead(conversationId: string): void {
   const conv = store.find((c) => c.id === conversationId)
   if (conv) conv.unreadCount = 0
 }
+
+export function markAsUnread(conversationId: string): void {
+  const store = getStore()
+  const conv = store.find((c) => c.id === conversationId)
+  if (conv) conv.unreadCount = Math.max(conv.unreadCount, 1)
+}

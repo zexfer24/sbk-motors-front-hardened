@@ -1,7 +1,8 @@
 'use client'
 
-import { Bot, Check, ChevronDown, Filter, MessageSquarePlus, Search, Tag, User, X } from 'lucide-react'
+import { Bot, Check, ChevronDown, Filter, Mail, MessageSquarePlus, Search, Tag, User, X } from 'lucide-react'
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChatwootConversation } from '@/lib/types/chatwoot'
 import type { ChatwootLabel } from '@/lib/api/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
@@ -13,6 +14,8 @@ interface ConversationListProps {
   activeId: string | null
   onSelect: (id: string) => void
   onNewChat: () => void
+  /** Clic derecho en un chat ya leído → "Marcar como no leído" (ver matchesStatus más abajo). */
+  onMarkUnread: (id: string) => Promise<{ error: string } | { ok: true }>
   labelCatalog: ChatwootLabel[]
   labelCatalogLoading: boolean
 }
@@ -25,11 +28,16 @@ const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
   { key: 'resolved', label: 'Cerrados' },
 ]
 
-// Reglas del negocio (2026-08-12):
-//   "Sin contestar" — abierta y SIN asignar, sin mirar mensajes sin leer.
-//     Antes miraba unreadCount; con el bot de IA desconectado del inbox
-//     (2026-08-11) un chat sin asignar no lo atiende nadie de por sí, así
-//     que basta con que esté sin asignar para contar como "sin contestar".
+// Reglas del negocio (2026-08-12, corregida 2026-08-13):
+//   "Sin contestar" — abierta, SIN asignar, Y con mensajes sin leer.
+//     La primera versión de esta regla (sin exigir unreadCount) mezclaba
+//     ahí cualquier chat sin asignar aunque el cliente ya hubiera sido
+//     atendido y el mensaje estuviera visto — con el bot de IA desconectado
+//     eso incluía un montón de conversaciones viejas sin dueño pero sin
+//     nada pendiente de responder. Exigir las dos cosas a la vez (sin
+//     asignar Y sin leer) es lo que de verdad significa "nadie le
+//     contestó todavía" — ver también onMarkUnread más abajo, que existe
+//     justo para poder devolver un chat a este tab a mano.
 //     El tab "IA" se retiró del menú por el mismo motivo (bot en
 //     mantenimiento) — se puede reagregar el día que se reactive, filtrando
 //     por `handledBy === 'ai'` como antes.
@@ -54,7 +62,7 @@ function matchesStatus(
   const assigneeId = c.assigneeId ?? null
   switch (status) {
     case 'pending':
-      return c.status === 'open' && assigneeId === null
+      return c.status === 'open' && assigneeId === null && c.unreadCount > 0
     case 'open_human':
       if (c.status !== 'open' || assigneeId === null) return false
       return isAdmin || assigneeId === myAgentId
@@ -68,6 +76,7 @@ export function ConversationList({
   activeId,
   onSelect,
   onNewChat,
+  onMarkUnread,
   labelCatalog,
   labelCatalogLoading,
 }: ConversationListProps) {
@@ -81,11 +90,27 @@ export function ConversationList({
   const [statusFilter, setStatusFilter] = useState<StatusKey | null>(null)
   const [categoryFilters, setCategoryFilters] = useState<string[]>([])
   const [filterMenuOpen, setFilterMenuOpen] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; conversationId: string } | null>(
+    null,
+  )
 
   function toggleCategory(title: string) {
     setCategoryFilters((prev) =>
       prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title],
     )
+  }
+
+  // Clic derecho (o mantener presionado en móvil) sobre un chat — mismo
+  // patrón que "Responder" en components/chat/message-bubble.tsx.
+  function handleContextMenu(e: React.MouseEvent, id: string) {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, conversationId: id })
+  }
+
+  function handleMarkUnread() {
+    if (!contextMenu) return
+    void onMarkUnread(contextMenu.conversationId)
+    setContextMenu(null)
   }
 
   function clearFilters() {
@@ -296,6 +321,7 @@ export function ConversationList({
                 key={c.id}
                 type="button"
                 onClick={() => onSelect(c.id)}
+                onContextMenu={(e) => handleContextMenu(e, c.id)}
                 style={{ animationDelay: `${Math.min(i, 20) * 40}ms` }}
                 className={cn(
                   'animate-row-assemble flex items-start gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors w-full',
@@ -382,6 +408,43 @@ export function ConversationList({
           })
         )}
       </div>
+
+      {contextMenu &&
+        conversations.find((c) => c.id === contextMenu.conversationId)?.unreadCount === 0 &&
+        createPortal(
+          <>
+            <button
+              type="button"
+              aria-label="Cerrar menú"
+              className="fixed inset-0 z-40"
+              onClick={() => setContextMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setContextMenu(null)
+              }}
+            />
+            {/* Portal a document.body por el mismo motivo que el menú de
+                "Responder" en message-bubble.tsx: un ancestro con
+                `transform` (acá no hay, pero mantiene el mismo patrón)
+                rompería el `fixed` si el menú viviera dentro del árbol. */}
+            <div
+              role="menu"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              className="fixed z-50 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleMarkUnread}
+                className="flex items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary"
+              >
+                <Mail className="h-3.5 w-3.5" />
+                Marcar como no leído
+              </button>
+            </div>
+          </>,
+          document.body,
+        )}
     </aside>
   )
 }
