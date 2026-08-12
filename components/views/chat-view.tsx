@@ -164,9 +164,14 @@ export function ChatView({ active }: ChatViewProps) {
       </header>
 
       <div className="flex min-h-0 flex-1">
+        {/* Sin overflow acá: ConversationList ya trae su propio contenedor
+            con overflow-y-auto para la lista. Tenerlo también en este
+            wrapper generaba una segunda barra de scroll (del alto exacto
+            del wrapper, redondeo de píxeles de por medio) que no movía nada
+            real — la lista entera vive en el scroll interno. */}
         <div
           className={cn(
-            'min-h-0 shrink-0 flex-col border-r border-border overflow-y-auto md:w-72 lg:w-80',
+            'min-h-0 shrink-0 flex-col border-r border-border overflow-hidden md:w-72 lg:w-80',
             showConversationOnMobile ? 'hidden md:flex' : 'flex',
           )}
         >
@@ -195,7 +200,7 @@ export function ChatView({ active }: ChatViewProps) {
               onLoadOlderMessages={loadOlderMessages}
               intervened={intervened}
               onBack={() => setShowConversationOnMobile(false)}
-              onSend={(text) => send({ content: text, messageType: 'outgoing' })}
+              onSend={(text, inReplyTo) => send({ content: text, messageType: 'outgoing', inReplyTo })}
               onSendImage={sendImage}
               onToggleIntervene={toggle}
               onAssign={assign}

@@ -291,6 +291,7 @@ export function addMessage(
       thumbUrl: null,
     })),
     status: "sent",
+    inReplyTo: input.inReplyTo ?? null,
   }
 
   conv.messages = [...conv.messages, msg]

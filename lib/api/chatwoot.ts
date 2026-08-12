@@ -106,10 +106,12 @@ export async function sendImageMessage(
   conversationId: string,
   file: File,
   caption?: string,
+  inReplyTo?: string,
 ): Promise<ChatwootMessage> {
   const formData = new FormData()
   formData.append("file", file)
   if (caption?.trim()) formData.append("content", caption.trim())
+  if (inReplyTo) formData.append("inReplyTo", inReplyTo)
 
   const res = await fetch(
     `${baseUrl()}/api/chatwoot/conversations/${conversationId}/messages`,

@@ -5,6 +5,7 @@ import { useState } from 'react'
 import type { ChatwootConversation } from '@/lib/types/chatwoot'
 import type { ChatwootLabel } from '@/lib/api/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
+import { useAuth } from '@/lib/hooks/use-auth'
 import { cn } from '@/lib/utils'
 
 interface ConversationListProps {
@@ -16,26 +17,47 @@ interface ConversationListProps {
   labelCatalogLoading: boolean
 }
 
-type StatusKey = 'pending' | 'open_human' | 'open_ai' | 'resolved'
+type StatusKey = 'pending' | 'open_human' | 'resolved'
 
 const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
   { key: 'pending', label: 'Sin contestar' },
   { key: 'open_human', label: 'Abiertas' },
-  { key: 'open_ai', label: 'IA' },
   { key: 'resolved', label: 'Cerrados' },
 ]
 
-// "Sin contestar" = tiene mensajes sin leer Y un asesor humano lo está
-// interviniendo (si lo sigue manejando Santiago/IA no cuenta como
-// "sin contestar": la IA ya se está haciendo cargo).
-function matchesStatus(c: ChatwootConversation, status: StatusKey) {
+// Reglas del negocio (2026-08-12):
+//   "Sin contestar" — abierta y SIN asignar, sin mirar mensajes sin leer.
+//     Antes miraba unreadCount; con el bot de IA desconectado del inbox
+//     (2026-08-11) un chat sin asignar no lo atiende nadie de por sí, así
+//     que basta con que esté sin asignar para contar como "sin contestar".
+//     El tab "IA" se retiró del menú por el mismo motivo (bot en
+//     mantenimiento) — se puede reagregar el día que se reactive, filtrando
+//     por `handledBy === 'ai'` como antes.
+//   "Abiertas" — abierta y CON asesor asignado (intervenir asigna al
+//     agente que interviene, ver app/api/chatwoot/conversations/[id]/intervene/route.ts,
+//     así que "intervenida" y "asignada" son el mismo estado acá). Es
+//     privado por perfil: cada asesor solo ve LAS SUYAS en este tab —
+//     puede seguir viendo las de otros compañeros desde "Todos" (la
+//     lectura es libre para todo el equipo, ver lib/chatwoot/authz.ts),
+//     simplemente no aparecen bajo su "Abiertas". El admin ve las de
+//     TODOS los asesores acá (vista de supervisor).
+//   "Cerrados" — resuelta. Hoy la única forma de resolver una conversación
+//     desde este sistema es cerrar una venta (ver
+//     app/api/chatwoot/conversations/[id]/close/route.ts), así que ya
+//     coincide con "cuando cierran una venta" sin necesidad de otro campo.
+function matchesStatus(
+  c: ChatwootConversation,
+  status: StatusKey,
+  myAgentId: number | null,
+  isAdmin: boolean,
+) {
+  const assigneeId = c.assigneeId ?? null
   switch (status) {
     case 'pending':
-      return c.handledBy === 'human' && c.unreadCount > 0
+      return c.status === 'open' && assigneeId === null
     case 'open_human':
-      return c.status === 'open' && c.handledBy === 'human'
-    case 'open_ai':
-      return c.status === 'open' && c.handledBy === 'ai'
+      if (c.status !== 'open' || assigneeId === null) return false
+      return isAdmin || assigneeId === myAgentId
     case 'resolved':
       return c.status === 'resolved'
   }
@@ -49,6 +71,10 @@ export function ConversationList({
   labelCatalog,
   labelCatalogLoading,
 }: ConversationListProps) {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+  const myAgentId = user?.chatwootAgentId ?? null
+
   const [search, setSearch] = useState('')
   // null = "Todos" (default). Estado y categorías se combinan con AND —
   // dentro de categorías, cualquiera de las seleccionadas cuenta (OR).
@@ -72,15 +98,19 @@ export function ConversationList({
       c.contactName.toLowerCase().includes(search.toLowerCase()) ||
       c.phone.includes(search)
     if (!matchesSearch) return false
-    if (statusFilter && !matchesStatus(c, statusFilter)) return false
+    if (statusFilter && !matchesStatus(c, statusFilter, myAgentId, isAdmin)) return false
     if (categoryFilters.length > 0 && !categoryFilters.some((cat) => c.labels.includes(cat))) {
       return false
     }
     return true
   })
 
-  const unreadChatsCount = conversations.filter(
-    (c) => c.handledBy === 'human' && c.unreadCount > 0,
+  // Mismo criterio que el filtro "Sin contestar" — se reusa matchesStatus
+  // en vez de repetir la condición a mano, para que este contador (badge
+  // del botón "Filtros" y de la opción del menú) nunca quede desincronizado
+  // de lo que el filtro realmente muestra al hacer clic.
+  const pendingChatsCount = conversations.filter((c) =>
+    matchesStatus(c, 'pending', myAgentId, isAdmin),
   ).length
 
   const activeFilterCount = (statusFilter ? 1 : 0) + categoryFilters.length
@@ -139,9 +169,9 @@ export function ConversationList({
           >
             <Filter className="h-3.5 w-3.5 shrink-0" />
             <span className="flex-1 truncate text-left">{filterButtonLabel}</span>
-            {unreadChatsCount > 0 && (
+            {pendingChatsCount > 0 && (
               <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-unread px-1 font-mono text-[0.6rem] font-bold text-primary-foreground">
-                {unreadChatsCount}
+                {pendingChatsCount}
               </span>
             )}
             <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', filterMenuOpen && 'rotate-180')} />
@@ -186,9 +216,9 @@ export function ConversationList({
                         <span className={cn('flex-1 truncate', statusFilter !== f.key && 'pl-[1.375rem]')}>
                           {f.label}
                         </span>
-                        {f.key === 'pending' && unreadChatsCount > 0 && (
+                        {f.key === 'pending' && pendingChatsCount > 0 && (
                           <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[0.6rem] font-normal text-muted-foreground">
-                            {unreadChatsCount}
+                            {pendingChatsCount}
                           </span>
                         )}
                       </button>

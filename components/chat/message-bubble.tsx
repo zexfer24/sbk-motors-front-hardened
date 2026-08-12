@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Bot, Check, CheckCheck, Download, File, Paperclip, Play, User, X } from 'lucide-react'
+import { Bot, Check, CheckCheck, Download, File, Paperclip, Play, Reply, User, X } from 'lucide-react'
 import type { ChatwootAttachment, ChatwootMessage } from '@/lib/types/chatwoot'
 import { cn } from '@/lib/utils'
 
@@ -63,11 +64,29 @@ const senderLabels: Record<string, string> = {
   human: 'Asesor',
 }
 
-export function MessageBubble({ message }: { message: ChatwootMessage }) {
+interface MessageBubbleProps {
+  message: ChatwootMessage
+  /** Mensaje al que este responde, ya resuelto contra la tanda cargada — null si no es respuesta o no se pudo resolver. */
+  replyPreview?: ChatwootMessage | null
+  /** Solo se ofrece "Responder" (clic derecho) si se pasa esto — y solo aplica a mensajes del cliente. */
+  onReply?: (message: ChatwootMessage) => void
+}
+
+export function MessageBubble({ message, replyPreview, onReply }: MessageBubbleProps) {
   const isCustomer = message.messageType === 'incoming'
   const isAi = message.senderType === 'ai'
   const isHuman = message.senderType === 'human'
   const [lightbox, setLightbox] = useState<ChatwootAttachment | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+
+  // Clic derecho (o mantener presionado en móvil, que el navegador traduce
+  // al mismo evento) sobre un mensaje del cliente — estilo WhatsApp: no
+  // tiene sentido "responder" a lo que el propio negocio mandó.
+  function handleContextMenu(e: React.MouseEvent) {
+    if (!isCustomer || !onReply) return
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }
 
   return (
     <motion.div
@@ -90,6 +109,7 @@ export function MessageBubble({ message }: { message: ChatwootMessage }) {
           </span>
         )}
         <div
+          onContextMenu={handleContextMenu}
           className={cn(
             'rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-[0_1px_0_0_oklch(0_0_0/0.3)]',
             isCustomer &&
@@ -100,7 +120,34 @@ export function MessageBubble({ message }: { message: ChatwootMessage }) {
               'rounded-br-sm border border-warning/30 bg-warning/10 text-foreground',
           )}
         >
-          {message.content && <p className="text-pretty">{message.content}</p>}
+          {message.inReplyTo && (
+            <div
+              className={cn(
+                'mb-1.5 rounded-md border-l-2 px-2 py-1 text-xs',
+                isCustomer ? 'border-muted-foreground/40 bg-background/40' : 'border-current/40 bg-black/10',
+              )}
+            >
+              {replyPreview ? (
+                <>
+                  <p className="font-semibold opacity-80">
+                    {replyPreview.messageType === 'incoming'
+                      ? 'Cliente'
+                      : (replyPreview.senderName ?? senderLabels[replyPreview.senderType])}
+                  </p>
+                  <p className="truncate opacity-70">
+                    {replyPreview.content ||
+                      (replyPreview.attachments.length > 0 ? '📎 Adjunto' : '')}
+                  </p>
+                </>
+              ) : (
+                <p className="italic opacity-60">Mensaje original no disponible</p>
+              )}
+            </div>
+          )}
+
+          {message.content && (
+            <p className="whitespace-pre-wrap text-pretty">{message.content}</p>
+          )}
 
           {message.attachments.length > 0 && (
             <div className={cn('flex flex-wrap gap-2', message.content && 'mt-2')}>
@@ -137,41 +184,88 @@ export function MessageBubble({ message }: { message: ChatwootMessage }) {
         </div>
       </div>
 
-      {lightbox && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4"
-          onClick={() => setLightbox(null)}
-        >
-          <div className="absolute right-4 top-4 flex items-center gap-2">
-            <DownloadButton attachment={lightbox} className="h-9 w-9 bg-black/40 hover:bg-black/60" />
+      {contextMenu &&
+        onReply &&
+        createPortal(
+          <>
             <button
               type="button"
-              onClick={() => setLightbox(null)}
-              className="rounded-full bg-black/40 p-2 text-white/80 hover:text-white"
-              aria-label="Cerrar"
+              aria-label="Cerrar menú"
+              className="fixed inset-0 z-40"
+              onClick={() => setContextMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setContextMenu(null)
+              }}
+            />
+            {/* `fixed` posiciona contra el viewport SOLO si ningún ancestro
+                tiene `transform` — el motion.div del mensaje sí lo tiene
+                (Framer Motion lo usa para animar), así que sin este portal
+                a document.body el menú terminaba posicionado contra ESE
+                div en vez del cursor, y se veía "lejos" del clic. */}
+            <div
+              role="menu"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              className="fixed z-50 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50"
             >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-          {lightbox.kind === 'image' ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={lightbox.fileUrl}
-              alt="Adjunto"
-              className="max-h-full max-w-full rounded-lg object-contain"
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <video
-              src={lightbox.fileUrl}
-              controls
-              autoPlay
-              className="max-h-full max-w-full rounded-lg"
-              onClick={(e) => e.stopPropagation()}
-            />
-          )}
-        </div>
-      )}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onReply(message)
+                  setContextMenu(null)
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary"
+              >
+                <Reply className="h-3.5 w-3.5" />
+                Responder
+              </button>
+            </div>
+          </>,
+          document.body,
+        )}
+
+      {lightbox &&
+        createPortal(
+          // Mismo motivo que el menú contextual de arriba: portal a
+          // document.body para que `fixed inset-0` cubra la ventana entera
+          // de verdad, en vez del recuadro del motion.div del mensaje (que
+          // tiene `transform` y rompe el `fixed` de sus descendientes).
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4"
+            onClick={() => setLightbox(null)}
+          >
+            <div className="absolute right-4 top-4 flex items-center gap-2">
+              <DownloadButton attachment={lightbox} className="h-9 w-9 bg-black/40 hover:bg-black/60" />
+              <button
+                type="button"
+                onClick={() => setLightbox(null)}
+                className="rounded-full bg-black/40 p-2 text-white/80 hover:text-white"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {lightbox.kind === 'image' ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={lightbox.fileUrl}
+                alt="Adjunto"
+                className="max-h-full max-w-full rounded-lg object-contain"
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <video
+                src={lightbox.fileUrl}
+                controls
+                autoPlay
+                className="max-h-full max-w-full rounded-lg"
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
+          </div>,
+          document.body,
+        )}
     </motion.div>
   )
 }

@@ -60,7 +60,7 @@ export function BarChartPanel({
           <p className="text-xs text-muted-foreground">{unavailableMessage}</p>
         </div>
       ) : (
-      <div className="relative mt-5 flex h-44 items-stretch gap-1.5 sm:gap-2">
+      <div className="relative mt-5 flex h-44 items-stretch gap-1 sm:gap-1.5">
         {data.map((value, i) => {
           const heightPct = Math.max((value / max) * 100, 3)
           const isHovered = hovered === i
@@ -106,6 +106,10 @@ export function BarChartPanel({
                 className={cn(
                   'mt-2 font-mono text-[0.6rem] transition-colors',
                   isHovered ? 'text-foreground' : 'text-muted-foreground',
+                  // Con 24 barras el eje se amontona en pantallas chicas —
+                  // se muestra una de cada dos ahí (el tooltip al pasar el
+                  // mouse/tocar siempre trae la hora exacta igual).
+                  i % 2 !== 0 && 'hidden sm:inline',
                 )}
               >
                 {labels[i].replace('h', '')}

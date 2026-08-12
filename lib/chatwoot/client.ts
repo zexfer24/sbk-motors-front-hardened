@@ -56,6 +56,40 @@ export async function getChatwootAgentId(): Promise<number | null> {
   return cachedAgentId ?? null
 }
 
+let cachedAgentNames: Map<number, string> | undefined
+
+// Nombre real (el que tiene configurado en su perfil de Chatwoot) de un
+// agente por su id — para poder mostrar "quién de nosotros" mandó un
+// mensaje en vez de siempre el dueño del token compartido (ver
+// content_attributes.sent_by_name en app/api/chatwoot/conversations/[id]/messages/route.ts,
+// que es donde se usa esto). Cachea la lista completa por proceso, mismo
+// criterio que getChatwootAgentId — un agente nuevo vinculado no aparece
+// hasta el próximo reinicio, aceptable para esto.
+export async function getChatwootAgentName(agentId: number): Promise<string | null> {
+  if (!cachedAgentNames) {
+    const config = getChatwootConfig()
+    if (!config) return null
+
+    try {
+      const agents = await fetch(`${config.baseUrl}/api/v1/accounts/${config.accountId}/agents`, {
+        headers: { api_access_token: config.apiToken },
+      }).then((res) => (res.ok ? res.json() : []))
+      cachedAgentNames = new Map(
+        (Array.isArray(agents) ? agents : [])
+          .filter((a: unknown): a is { id: number; name: string } => {
+            const rec = a as Record<string, unknown>
+            return typeof rec?.id === "number" && typeof rec?.name === "string"
+          })
+          .map((a) => [a.id, a.name]),
+      )
+    } catch {
+      return null
+    }
+  }
+
+  return cachedAgentNames.get(agentId) ?? null
+}
+
 // `path` se concatena a la URL de la API sin codificar, así que un segmento
 // dinámico con `..` (o su forma percent-encoded, que Next.js decodifica en
 // los parámetros de ruta) podía desviar la petición a otro endpoint de la

@@ -60,23 +60,24 @@ describe("bucketHourlyMessages", () => {
   const bounds = caracasOperatingHoursBoundsUtc(date)
 
   it("counts incoming messages (type 0) as chats at the right hour index", () => {
-    // Caracas 12:00 (UTC-4) -> 16:00 UTC, índice 12-9=3
+    // Caracas 12:00 (UTC-4) -> 16:00 UTC, índice = hora local = 12
     const messages = [{ messageType: 0, createdAtIso: "2026-08-12T16:00:00.000Z" }]
     const stats = bucketHourlyMessages(messages, bounds)
-    expect(stats.chats[3]).toBe(1)
-    expect(stats.messages[3]).toBe(0)
+    expect(stats.chats[12]).toBe(1)
+    expect(stats.messages[12]).toBe(0)
   })
 
   it("counts outgoing messages (type 1) as messages at the right hour index", () => {
-    // Caracas 20:00 (UTC-4) -> día siguiente 00:00 UTC, índice 20-9=11
+    // Caracas 20:00 (UTC-4) -> día siguiente 00:00 UTC, índice = hora local = 20
     const messages = [{ messageType: 1, createdAtIso: "2026-08-13T00:00:00.000Z" }]
     const stats = bucketHourlyMessages(messages, bounds)
-    expect(stats.messages[11]).toBe(1)
-    expect(stats.chats[11]).toBe(0)
+    expect(stats.messages[20]).toBe(1)
+    expect(stats.chats[20]).toBe(0)
   })
 
   it("ignores messages outside the given bounds", () => {
-    const messages = [{ messageType: 0, createdAtIso: "2026-08-12T12:59:00.000Z" }] // justo antes de bounds.startUtc
+    const justBeforeStart = new Date(new Date(bounds.startUtc).getTime() - 60_000).toISOString()
+    const messages = [{ messageType: 0, createdAtIso: justBeforeStart }]
     const stats = bucketHourlyMessages(messages, bounds)
     expect(stats.chats.every((n) => n === 0)).toBe(true)
   })

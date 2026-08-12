@@ -157,7 +157,7 @@ export function DashboardView({ active = true }: { active?: boolean }) {
                   data={hourly.chats}
                   hue={150}
                   baseDelay={250}
-                  format={(v) => `${v} chats`}
+                  format={(v) => `${v} msgs recibidos`}
                   unavailable={!hourly.chatwootAvailable}
                   unavailableMessage="Chatwoot no disponible."
                 />

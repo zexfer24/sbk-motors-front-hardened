@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 import { getConversation, addMessage } from "@/lib/api/chatwoot-demo-store"
-import { getChatwootConfig, chatwootFetch, chatwootFetchForm } from "@/lib/chatwoot/client"
+import { getChatwootAgentName, getChatwootConfig, chatwootFetch, chatwootFetchForm } from "@/lib/chatwoot/client"
 import type { NewMessageInput } from "@/lib/types/chatwoot"
-import { guardConversationRead, guardConversationWrite } from "@/lib/chatwoot/authz"
+import { guardConversationRead, guardConversationWrite, callerAgentId } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -30,7 +30,13 @@ export async function GET(request: Request, { params }: RouteContext) {
         path,
         { cache: "no-store" },
       )
-      const messages = data.payload.map(mapChatwootMessage)
+      // Los avisos automáticos de Chatwoot (asignó/dejó de intervenir,
+      // resolvió...) siempre quedan atribuidos al dueño del token
+      // compartido, nunca a quien realmente hizo la acción desde nuestro
+      // panel (ver getChatwootAgentName más abajo) — mostrarlos tal cual
+      // sería mentir sobre quién hizo qué, así que se ocultan del hilo en
+      // vez de arriesgarse a esa atribución incorrecta.
+      const messages = data.payload.map(mapChatwootMessage).filter((m) => m.messageType !== "activity")
       return NextResponse.json({ messages, source: "chatwoot" })
     } catch {
       return NextResponse.json(
@@ -66,10 +72,16 @@ export async function POST(request: Request, { params }: RouteContext) {
     return NextResponse.json({ error: "contenido_requerido" }, { status: 400 })
   }
 
+  const inReplyTo = validReplyId(body.inReplyTo)
+  if (body.inReplyTo !== undefined && inReplyTo === null) {
+    return NextResponse.json({ error: "respuesta_invalida" }, { status: 400 })
+  }
+
   const config = getChatwootConfig()
 
   if (config) {
     try {
+      const contentAttributes = await buildOutgoingContentAttributes(request, inReplyTo)
       const data = await chatwootFetch<Record<string, unknown>>(
         `/conversations/${id}/messages`,
         {
@@ -78,6 +90,11 @@ export async function POST(request: Request, { params }: RouteContext) {
             content: body.content.trim(),
             message_type: "outgoing",
             private: false,
+            // Respuesta citada estilo WhatsApp — Chatwoot guarda el id del
+            // mensaje original acá y arma la cita hacia Meta con el wamid
+            // que ya tiene asociado. No verificado contra un envío real
+            // todavía (ver nota en mapChatwootMessage más abajo).
+            ...(contentAttributes ? { content_attributes: contentAttributes } : {}),
           }),
         },
       )
@@ -90,11 +107,45 @@ export async function POST(request: Request, { params }: RouteContext) {
     }
   }
 
-  const msg = addMessage(id, body)
+  const msg = addMessage(id, { ...body, inReplyTo: inReplyTo ?? undefined })
   if (!msg) {
     return NextResponse.json({ error: "no_encontrado" }, { status: 404 })
   }
   return NextResponse.json(msg, { status: 201 })
+}
+
+// Solo acepta el mismo formato de id que ya se usa para `before` (entero de
+// Chatwoot como string) — `undefined` es válido (no es una respuesta),
+// cualquier otra cosa no.
+function validReplyId(raw: unknown): string | null {
+  if (raw === undefined) return null
+  return typeof raw === "string" && /^[0-9]{1,18}$/.test(raw) ? raw : null
+}
+
+// Mensajes salientes creados por este panel siempre le pegan a Chatwoot con
+// el token compartido, así que Chatwoot atribuye el mensaje al agente
+// dueño de ESE token, sin importar qué asesor esté realmente logueado acá
+// (ver mapChatwootMessage más abajo, que lee esto de vuelta). Guardar el
+// nombre real en content_attributes es lo único que permite mostrar
+// después "quién de nosotros" mandó cada mensaje — viaja con el mensaje
+// dentro de Chatwoot, sin necesitar una tabla propia. Si el que llama no
+// tiene un agente de Chatwoot vinculado (admin, o asesor sin vincular),
+// devuelve `null` y el mensaje queda sin ese dato, igual que antes.
+async function resolveSentByName(request: Request): Promise<string | null> {
+  const agentId = callerAgentId(request)
+  if (agentId === null) return null
+  return getChatwootAgentName(agentId)
+}
+
+async function buildOutgoingContentAttributes(
+  request: Request,
+  inReplyTo: string | null,
+): Promise<Record<string, unknown> | null> {
+  const sentByName = await resolveSentByName(request)
+  const attrs: Record<string, unknown> = {}
+  if (inReplyTo) attrs.in_reply_to = Number(inReplyTo)
+  if (sentByName) attrs.sent_by_name = sentByName
+  return Object.keys(attrs).length > 0 ? attrs : null
 }
 
 // Envío de imágenes (p. ej. guías de envío) — solo funciona con Chatwoot
@@ -111,6 +162,8 @@ async function handleAttachmentUpload(request: Request, id: string) {
     return NextResponse.json({ error: "archivo_requerido" }, { status: 400 })
   }
   const caption = incomingForm?.get("content")
+  const inReplyTo = validReplyId(incomingForm?.get("inReplyTo")?.toString() ?? undefined)
+  const sentByName = await resolveSentByName(request)
 
   const outgoingForm = new FormData()
   outgoingForm.set("message_type", "outgoing")
@@ -118,6 +171,11 @@ async function handleAttachmentUpload(request: Request, id: string) {
   if (typeof caption === "string" && caption.trim()) {
     outgoingForm.set("content", caption.trim())
   }
+  // Notación de corchetes de Rails para un hash anidado en un form
+  // multipart — no verificado contra un envío real todavía, igual que la
+  // rama JSON de arriba.
+  if (inReplyTo) outgoingForm.set("content_attributes[in_reply_to]", inReplyTo)
+  if (sentByName) outgoingForm.set("content_attributes[sent_by_name]", sentByName)
   outgoingForm.append("attachments[]", file, file.name)
 
   try {
@@ -146,17 +204,40 @@ function mapChatwootMessage(raw: Record<string, unknown>) {
     ? (raw.attachments as Record<string, unknown>[])
     : []
 
+  // `content_attributes.in_reply_to` es el campo que usa la propia UI de
+  // Chatwoot para respuestas citadas — no confirmado contra una respuesta
+  // real de la API todavía (no hay forma de probarlo sin escribirle a un
+  // cliente real). Si el nombre del campo resultara distinto, este es el
+  // único lugar que hay que tocar.
+  const contentAttributes = (raw.content_attributes as Record<string, unknown>) ?? {}
+  const inReplyToRaw = contentAttributes.in_reply_to
+
+  // sent_by_name (ver buildOutgoingContentAttributes más arriba) es quién
+  // REALMENTE mandó este mensaje desde nuestro panel — sender.name es
+  // siempre el dueño del token compartido de Chatwoot, así que se prefiere
+  // sent_by_name cuando está. Solo aplica a mensajes salientes de un
+  // humano: no tiene sentido para lo que manda el cliente ni para lo que
+  // contesta la IA.
+  const sentByName = contentAttributes.sent_by_name
+  const senderName =
+    isOutgoing && senderType === "human" && typeof sentByName === "string" && sentByName
+      ? sentByName
+      : sender.name
+        ? String(sender.name)
+        : null
+
   return {
     id: String(raw.id ?? ""),
     content: String(raw.content ?? ""),
     messageType: isIncoming ? "incoming" : isOutgoing ? "outgoing" : "activity",
     senderType,
-    senderName: sender.name ? String(sender.name) : null,
+    senderName,
     createdAt: raw.created_at
       ? new Date((raw.created_at as number) * 1000).toISOString()
       : new Date().toISOString(),
     attachments: rawAttachments.map(mapChatwootAttachment),
     status: mapMessageStatus(raw.status),
+    inReplyTo: inReplyToRaw != null ? String(inReplyToRaw) : null,
   }
 }
 

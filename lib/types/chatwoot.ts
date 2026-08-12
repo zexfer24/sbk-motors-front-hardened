@@ -19,6 +19,8 @@ export interface ChatwootMessage {
   createdAt: string
   attachments: ChatwootAttachment[]
   status?: "sent" | "delivered" | "read"
+  /** id (de Chatwoot) del mensaje al que este responde — respuesta citada estilo WhatsApp. */
+  inReplyTo?: string | null
 }
 
 export interface ChatwootConversation {
@@ -55,4 +57,6 @@ export type NewMessageInput = {
   content: string
   messageType: "outgoing" | "activity"
   attachments?: { fileUrl: string; fileType: string }[]
+  /** id del mensaje entrante al que se responde — ver ChatwootMessage.inReplyTo. */
+  inReplyTo?: string
 }

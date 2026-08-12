@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect, useLayoutEffect } from 'react'
+import { useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import {
   ArrowLeft,
   Bot,
@@ -11,10 +11,12 @@ import {
   MessageSquareText,
   Paperclip,
   Phone,
+  Reply,
   Settings2,
   SendHorizonal,
   Tag,
   UserCog,
+  X,
 } from 'lucide-react'
 import type { ChatwootConversation, ChatwootMessage } from '@/lib/types/chatwoot'
 import type { NewOrderDb } from '@/lib/types/order'
@@ -63,8 +65,8 @@ interface ChatPanelProps {
   onLoadOlderMessages: () => void
   intervened: boolean
   onBack: () => void
-  onSend: (text: string) => void
-  onSendImage: (file: File, caption?: string) => Promise<void>
+  onSend: (text: string, inReplyTo?: string) => void
+  onSendImage: (file: File, caption?: string, inReplyTo?: string) => Promise<void>
   onToggleIntervene: () => Promise<{ error: string } | { ok: true }>
   onAssign: (agentId: number | null) => Promise<{ error: string } | { ok: true }>
   onSetLabels: (labels: string[]) => Promise<{ error: string } | { ok: true }>
@@ -108,6 +110,7 @@ export function ChatPanel({
   const [labelsSaving, setLabelsSaving] = useState(false)
   const [labelsError, setLabelsError] = useState<string | null>(null)
   const [labelsManagerOpen, setLabelsManagerOpen] = useState(false)
+  const [replyTarget, setReplyTarget] = useState<ChatwootMessage | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -121,6 +124,22 @@ export function ChatPanel({
     update: updateQuickReply,
     remove: removeQuickReply,
   } = useQuickReplies()
+
+  // Para resolver de qué mensaje es "respuesta" un mensaje citado sin
+  // pedirle nada extra a Chatwoot — la cita casi siempre apunta a algo que
+  // ya está en esta misma tanda cargada.
+  const messagesById = useMemo(() => {
+    const map = new Map<string, ChatwootMessage>()
+    for (const m of messages) map.set(m.id, m)
+    return map
+  }, [messages])
+
+  // El objetivo de "responder" es de la conversación anterior si no se
+  // limpia al cambiar de chat — se vería el banner de "Respondiendo a..."
+  // apuntando a un mensaje de otra persona.
+  useEffect(() => {
+    setReplyTarget(null)
+  }, [conversation.id])
 
   // Solo baja el scroll cuando cambia el ÚLTIMO mensaje (uno nuevo llegó o
   // se mandó) — si lo que cambió fue anteponer mensajes viejos al abrir
@@ -190,8 +209,17 @@ export function ChatPanel({
   function submitDraft() {
     const text = draft.trim()
     if (!text) return
-    onSend(text)
+    onSend(text, replyTarget?.id)
     setDraft('')
+    setReplyTarget(null)
+  }
+
+  // Solo se puede responder a un mensaje del cliente (estilo WhatsApp: no
+  // tiene sentido "citar" algo que mandó el propio negocio).
+  function handleReply(message: ChatwootMessage) {
+    if (message.messageType !== 'incoming') return
+    setReplyTarget(message)
+    textareaRef.current?.focus()
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -296,8 +324,10 @@ export function ChatPanel({
   async function sendImageFile(file: File) {
     setImageError(null)
     setImageUploading(true)
+    const inReplyTo = replyTarget?.id
+    setReplyTarget(null)
     try {
-      await onSendImage(file)
+      await onSendImage(file, undefined, inReplyTo)
     } catch {
       setImageError('No se pudo enviar la imagen. Intenta de nuevo.')
     } finally {
@@ -403,7 +433,7 @@ export function ChatPanel({
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground transition-all hover:text-foreground active:scale-95"
             >
               <Tag className="h-4 w-4" />
-              <span className="hidden sm:inline">Etiquetas</span>
+              <span className="hidden sm:inline">Categoría</span>
             </button>
 
             {labelsPickerOpen && (
@@ -517,7 +547,7 @@ export function ChatPanel({
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground transition-all hover:text-foreground active:scale-95"
             >
               <UserCog className="h-4 w-4" />
-              <span className="hidden sm:inline">Asignar a…</span>
+              <span className="hidden sm:inline">Asignar</span>
             </button>
 
             {assignOpen && (
@@ -611,7 +641,14 @@ export function ChatPanel({
             </div>
           </div>
         ) : (
-          messages.map((m) => <MessageBubble key={m.id} message={m} />)
+          messages.map((m) => (
+            <MessageBubble
+              key={m.id}
+              message={m}
+              onReply={handleReply}
+              replyPreview={m.inReplyTo ? messagesById.get(m.inReplyTo) ?? null : null}
+            />
+          ))
         )}
 
         {conversation.typing && (
@@ -651,6 +688,27 @@ export function ChatPanel({
                   ? 'Ventana de 24h de WhatsApp cerrada — el cliente no escribe hace más de 24h. Solo se puede reabrir con un mensaje de plantilla ("Nuevo chat").'
                   : 'Todavía no hay respuesta del cliente en esta conversación — no se puede mandar mensaje libre hasta que escriba, o hazlo con una plantilla.'}
               </p>
+            )}
+            {replyTarget && (
+              <div className="flex items-center gap-2 rounded-lg border-l-2 border-primary bg-secondary/60 py-1.5 pl-3 pr-2">
+                <Reply className="h-3.5 w-3.5 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-primary">
+                    Respondiendo a {conversation.contactName}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {replyTarget.content || (replyTarget.attachments.length > 0 ? '📎 Adjunto' : '')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReplyTarget(null)}
+                  className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  aria-label="Cancelar respuesta"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             )}
             <form onSubmit={handleSubmit} className="flex items-end gap-2">
               <input

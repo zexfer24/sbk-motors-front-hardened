@@ -270,9 +270,9 @@ export function useChatwoot(active: boolean = true) {
   )
 
   const sendImage = useCallback(
-    async (file: File, caption?: string) => {
+    async (file: File, caption?: string, inReplyTo?: string) => {
       if (!activeId) return
-      const msg = await sendImageMessage(activeId, file, caption)
+      const msg = await sendImageMessage(activeId, file, caption, inReplyTo)
       setMessages((prev) => [...prev, msg])
       setConversations((prev) =>
         prev.map((c) =>
