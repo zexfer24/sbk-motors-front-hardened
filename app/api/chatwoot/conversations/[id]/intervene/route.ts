@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getConversation } from "@/lib/api/chatwoot-demo-store"
 import { chatwootFetch, getChatwootAgentId, getChatwootConfig } from "@/lib/chatwoot/client"
+import { invalidateConversationsCache } from "@/lib/api/chatwoot-sync"
 import {
   authorizeConversationRead,
   callerAgentId as getCallerAgentId,
@@ -53,6 +54,11 @@ export async function POST(request: Request, { params }: RouteContext) {
         method: "POST",
         body: JSON.stringify({ assignee_id: assigneeId }),
       })
+      // Sin esto, una recarga del listado disparada por el SSE justo
+      // después de este POST podía servir el snapshot de antes del cambio
+      // (ver invalidateConversationsCache) — visualmente, como si
+      // "Intervenir" no hubiera hecho nada.
+      invalidateConversationsCache()
       return NextResponse.json({ handledBy: intervene ? "human" : "ai" })
     } catch {
       return NextResponse.json({ error: "error_chatwoot" }, { status: 502 })

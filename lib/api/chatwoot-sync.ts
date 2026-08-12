@@ -463,6 +463,19 @@ const cacheState: ConversationsCacheState =
   globalForConversationsCache.__chatwootConversationsCache ?? { inFlight: null, fresh: null }
 globalForConversationsCache.__chatwootConversationsCache = cacheState
 
+// Para que una escritura (intervenir, asignar, cerrar venta, etiquetar)
+// no quede pisada por este mismo caché: sin esto, una recarga disparada
+// por el SSE justo después de escribir podía servir el snapshot de ANTES
+// del cambio si alguien había pedido el listado en los 15s previos —
+// visualmente, "Intervenir" parecía no hacer nada. Las rutas de escritura
+// bajo app/api/chatwoot/conversations/[id]/ llaman a esto apenas Chatwoot
+// confirma el cambio, así que la próxima lectura (la que dispara el SSE, o
+// cualquier polling mientras tanto) vuelve a pegarle a Chatwoot en vez de
+// servir el caché viejo.
+export function invalidateConversationsCache(): void {
+  cacheState.fresh = null
+}
+
 // Intenta la vía rápida (Postgres directo, ver chatwoot-db.ts) antes de la
 // API. Devuelve `null` si no está disponible (variables de entorno
 // CHATWOOT_DB_* sin configurar todavía — nada que loguear, es el estado

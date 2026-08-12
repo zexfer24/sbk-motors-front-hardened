@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getChatwootConfig } from "@/lib/chatwoot/client"
 import { getConversationLabels, setConversationLabels } from "@/lib/chatwoot/labels"
+import { invalidateConversationsCache } from "@/lib/api/chatwoot-sync"
 import { guardConversationRead, guardConversationWrite } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -39,6 +40,9 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   try {
     const result = await setConversationLabels(id, labels)
+    // Ver el comentario de invalidateConversationsCache — mismo motivo
+    // que en /intervene.
+    invalidateConversationsCache()
     return NextResponse.json({ labels: result })
   } catch {
     return NextResponse.json({ error: "error_chatwoot" }, { status: 502 })

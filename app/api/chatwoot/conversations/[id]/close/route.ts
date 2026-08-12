@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { chatwootFetch, getChatwootConfig } from "@/lib/chatwoot/client"
+import { invalidateConversationsCache } from "@/lib/api/chatwoot-sync"
 import { guardConversationWrite } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
@@ -26,6 +27,9 @@ export async function POST(request: Request, { params }: RouteContext) {
         method: "POST",
         body: JSON.stringify({ assignee_id: null }),
       })
+      // Ver el comentario de invalidateConversationsCache — mismo motivo
+      // que en /intervene.
+      invalidateConversationsCache()
       return NextResponse.json({ status: "resolved", handledBy: "ai" })
     } catch {
       return NextResponse.json({ error: "error_chatwoot" }, { status: 502 })

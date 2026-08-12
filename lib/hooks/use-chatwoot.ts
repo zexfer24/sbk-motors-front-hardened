@@ -19,6 +19,7 @@ import { addOrder } from "@/lib/api/orders"
 import type { ChatwootConversation, ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
 import type { DataSource } from "@/lib/api/shared"
 import type { NewOrderDb } from "@/lib/types/order"
+import { useAuth } from "@/lib/hooks/use-auth"
 
 // `active` es falso cuando la pestaña de WhatsApp sigue montada (para
 // cambiar de pestaña sin perder el estado ni recargar) pero no es la que
@@ -35,6 +36,11 @@ import type { NewOrderDb } from "@/lib/types/order"
 const FALLBACK_POLL_MS = 45_000
 
 export function useChatwoot(active: boolean = true) {
+  // Solo para poder calcular el mismo `canWrite` que ya deriva el servidor
+  // (ver app/api/chatwoot/conversations/route.ts) en el optimistic update
+  // de `toggle` — así el compositor se habilita al toque, sin esperar la
+  // vuelta completa por la red.
+  const { user } = useAuth()
   const [conversations, setConversations] = useState<ChatwootConversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatwootMessage[]>([])
@@ -307,27 +313,66 @@ export function useChatwoot(active: boolean = true) {
     [loadConversations],
   )
 
+  // Antes este optimistic update solo tocaba `handledBy` (el badge de
+  // arriba) — `assigneeId`/`canWrite` se quedaban con el valor viejo hasta
+  // que llegara una recarga real (SSE + caché de 15s del backend, ver
+  // invalidateConversationsCache en lib/api/chatwoot-sync.ts). Resultado:
+  // el badge decía "IA en pausa" pero el compositor de texto seguía sin
+  // aparecer, como si Intervenir no hubiera hecho efecto. Ahora se calcula
+  // acá el mismo `canWrite` que ya deriva el servidor (mismo agente propio
+  // que /intervene le asigna a la conversación cuando SÍ hay uno
+  // vinculado), para que badge y compositor cambien juntos al toque.
+  //
+  // `assigneeName` NO se toca a propósito: solo se muestra en el banner
+  // "Intervenida por X" cuando `canWrite` es `false` (es decir, cuando la
+  // tiene OTRO asesor) — quien hace clic acá nunca ve ese banner para su
+  // propia intervención (ve el compositor), así que no hay nada que
+  // adivinar ahí sin arriesgarse a mostrar un nombre incorrecto.
   const toggle = useCallback(async (): Promise<{ error: string } | { ok: true }> => {
     if (!activeId) return { error: "No hay conversación seleccionada." }
-    const wasHuman = conversations.find((c) => c.id === activeId)?.handledBy === "human"
+    const current = conversations.find((c) => c.id === activeId)
+    const wasHuman = current?.handledBy === "human"
     const newState = !wasHuman
+
+    const prevSnapshot = current
+      ? { assigneeId: current.assigneeId, canWrite: current.canWrite, handledBy: current.handledBy }
+      : null
+
+    const isAdmin = user?.role === "admin"
+    const myAgentId = user?.chatwootAgentId ?? null
+    // Al soltar (newState false) siempre queda sin asignar. Al tomar
+    // (newState true), Chatwoot asigna al agente propio de quien
+    // interviene si está vinculado — si no, el servidor cae al agente del
+    // token compartido (un id que no podemos adivinar acá), así que se
+    // deja el assigneeId anterior para ese caso poco común y se confía en
+    // la próxima recarga real para corregirlo.
+    const optimisticAssigneeId = newState ? (myAgentId ?? current?.assigneeId ?? null) : null
+    const optimisticCanWrite = isAdmin || (myAgentId !== null && optimisticAssigneeId === myAgentId)
+
     setConversations((prev) =>
       prev.map((c) =>
-        c.id === activeId ? { ...c, handledBy: newState ? "human" : "ai" } : c,
+        c.id === activeId
+          ? {
+              ...c,
+              handledBy: newState ? "human" : "ai",
+              assigneeId: optimisticAssigneeId,
+              canWrite: optimisticCanWrite,
+            }
+          : c,
       ),
     )
     try {
       await toggleIntervention(activeId, newState)
       return { ok: true }
     } catch (err) {
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === activeId ? { ...c, handledBy: wasHuman ? "human" : "ai" } : c,
-        ),
-      )
+      if (prevSnapshot) {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === activeId ? { ...c, ...prevSnapshot } : c)),
+        )
+      }
       return { error: err instanceof Error ? err.message : "No se pudo cambiar el estado." }
     }
-  }, [activeId, conversations])
+  }, [activeId, conversations, user])
 
   // Asignación directa por un supervisor — a diferencia de `toggle`, no
   // asigna al propio agente de quien llama sino al que se elija (o
