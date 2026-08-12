@@ -190,26 +190,6 @@ export function ChatPanel({
     el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`
   }, [draft])
 
-  // Foco automático al entrar a una conversación distinta — así se puede
-  // empezar a escribir de una vez, sin tener que hacer clic en el input.
-  // El focus() se difiere a un frame (rAF) en vez de llamarse directo acá:
-  // en el mismo render en que cambia `conversation` también puede estar
-  // terminando de aplicarse la transición de pestañas de app/page.tsx
-  // (opacidad/transform) o el layout todavía se está acomodando — pedirle
-  // foco al elemento en ese instante podía perderse. Un frame más tarde el
-  // layout ya está asentado.
-  //
-  // Ojo: si la ventana de 24h de WhatsApp está cerrada, el textarea de más
-  // abajo queda `disabled` — un input deshabilitado NO puede recibir foco
-  // (lo bloquea el navegador, no esto), así que en esos chats no hay nada
-  // que enfocar todavía cuando se entra. Es esperable: tampoco se podría
-  // escribir ahí.
-  useEffect(() => {
-    if (!conversation.canWrite) return
-    const frame = requestAnimationFrame(() => textareaRef.current?.focus())
-    return () => cancelAnimationFrame(frame)
-  }, [conversation.id, conversation.canWrite])
-
   // Ventana de 24h de WhatsApp: se recalcula en cada render a partir del
   // último mensaje entrante cargado. No hay un timer que la haga "vencer"
   // sola en pantalla — el polling/SSE ya provoca renders seguido, así que
@@ -219,6 +199,29 @@ export function ChatPanel({
     ? new Date(lastCustomerMessage.createdAt).getTime() + WHATSAPP_WINDOW_MS
     : null
   const withinWhatsappWindow = windowExpiresAt !== null && Date.now() < windowExpiresAt
+
+  // Foco automático al entrar a una conversación distinta — así se puede
+  // empezar a escribir de una vez, sin tener que hacer clic en el input.
+  //
+  // Depende TAMBIÉN de `withinWhatsappWindow`, no solo de
+  // conversation.id/canWrite — motivo: al cambiar de conversación,
+  // selectConversation() (use-chatwoot.ts) vacía `messages` de una, y
+  // recién llega la tanda real después de un fetch. Mientras `messages`
+  // está vacío, lastIncomingMessage() no encuentra nada, así que
+  // withinWhatsappWindow da `false` y el textarea de más abajo queda
+  // `disabled` — un input deshabilitado no puede recibir foco (lo bloquea
+  // el navegador). Si este efecto solo mirara conversation.id/canWrite, se
+  // dispararía en ESE primer render (con el input todavía deshabilitado) y
+  // nunca se volvería a intentar cuando los mensajes reales llegan y el
+  // input se habilita. Al incluir withinWhatsappWindow en las dependencias,
+  // el efecto se vuelve a correr justo cuando pasa de false a true (los
+  // mensajes ya cargaron), que es el momento en que el foco de verdad puede
+  // aplicarse.
+  useEffect(() => {
+    if (!conversation.canWrite || !withinWhatsappWindow) return
+    const frame = requestAnimationFrame(() => textareaRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [conversation.id, conversation.canWrite, withinWhatsappWindow])
 
   function submitDraft() {
     const text = draft.trim()
