@@ -31,6 +31,7 @@
 // ============================================================================
 
 import { Pool } from "pg"
+import type { QueryResultRow } from "pg"
 import type { MappedConversation } from "@/lib/api/chatwoot-sync"
 
 interface ChatwootDbConfig {
@@ -43,7 +44,10 @@ interface ChatwootDbConfig {
 
 let cachedConfig: ChatwootDbConfig | null | undefined
 
-function getDbConfig(): ChatwootDbConfig | null {
+// Exportada para que otros módulos de solo lectura contra este mismo
+// Postgres (p. ej. lib/api/chatwoot-stats-db.ts) puedan chequear
+// disponibilidad sin duplicar la lectura de las variables CHATWOOT_DB_*.
+export function getDbConfig(): ChatwootDbConfig | null {
   if (cachedConfig !== undefined) return cachedConfig
 
   const host = process.env.CHATWOOT_DB_HOST
@@ -67,7 +71,9 @@ function getDbConfig(): ChatwootDbConfig | null {
 // evita el problema en dev.
 const globalForChatwootDb = globalThis as unknown as { __chatwootDbPool?: Pool }
 
-function getPool(config: ChatwootDbConfig): Pool {
+// Exportada por el mismo motivo que getDbConfig — un solo pool para toda
+// lectura directa a este Postgres, nunca uno por módulo.
+export function getPool(config: ChatwootDbConfig): Pool {
   if (globalForChatwootDb.__chatwootDbPool) return globalForChatwootDb.__chatwootDbPool
 
   const pool = new Pool({
@@ -101,6 +107,32 @@ function getPool(config: ChatwootDbConfig): Pool {
 
   globalForChatwootDb.__chatwootDbPool = pool
   return pool
+}
+
+// Helper genérico de solo lectura para otros módulos que necesiten leer de
+// este mismo Postgres (p. ej. lib/api/chatwoot-stats-db.ts) sin duplicar la
+// lectura de config ni el manejo del pool. Mismo contrato que
+// fetchConversationsFromDb: `null` si no hay config o si la consulta falló
+// — nunca lanza —, y solo loguea cuando SÍ había config pero la consulta
+// falló de verdad.
+export async function queryChatwootDb<T extends QueryResultRow>(
+  text: string,
+  params: unknown[],
+): Promise<T[] | null> {
+  const config = getDbConfig()
+  if (!config) return null
+
+  try {
+    const pool = getPool(config)
+    const { rows } = await pool.query<T>(text, params)
+    return rows
+  } catch (err) {
+    console.error(
+      "[chatwoot-db] la lectura directa a Postgres falló (timeout, conexión rechazada o esquema distinto al documentado):",
+      err,
+    )
+    return null
+  }
 }
 
 // enum real de Chatwoot v4.16.2 — app/models/conversation.rb:
