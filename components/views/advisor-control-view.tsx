@@ -1,7 +1,20 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Bot, Check, ChevronDown, Inbox, Loader2, MessagesSquare, User, UserCog, Users } from 'lucide-react'
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  Clock,
+  Gauge,
+  Inbox,
+  Loader2,
+  MessagesSquare,
+  Target,
+  TrendingDown,
+  TrendingUp,
+  User,
+} from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { useChatwoot } from '@/lib/hooks/use-chatwoot'
 import { assignConversation, fetchAgents, type Agent } from '@/lib/api/chatwoot'
@@ -9,24 +22,49 @@ import type { ChatwootConversation } from '@/lib/types/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
 import { cn } from '@/lib/utils'
 
-// "Libres" se trata como una cola más en la lista de la izquierda, igual
-// que la de cada asesor — así seleccionar cualquiera de las dos usa el
-// mismo componente de detalle a la derecha (master-detail, como
-// ConversationList + ChatPanel en WhatsApp) en vez de apilar todo en una
-// sola página larga.
-type QueueKey = 'unassigned' | number
+// Mismo shape que devuelve GET /api/dashboard/agents — se define acá en vez
+// de importar lib/chatwoot-agent-stats.ts (ese módulo tira de lib/chatwoot/
+// client.ts, server-only, no debe entrar al bundle de cliente).
+interface AgentStatsDto {
+  available: boolean
+  chatsRespondidos: number
+  chatsRespondidosAyer: number
+  velocidadRespuestaSegundos: number | null
+  velocidadRespuestaSegundosAyer: number | null
+  tasaRespuesta: number | null
+  tasaRespuestaAyer: number | null
+  tiempoMuertoSegundos: number
+  tiempoMuertoSegundosAyer: number
+}
 
-// Admin-only (ver app/page.tsx) — muestra qué tiene cada asesor asignado
-// hoy y deja reasignar cualquier chat abierto sin pasar por Intervenir. Ver
-// components/chat/conversation-list.tsx (matchesStatus) para la contraparte:
-// desde acá se ve y reparte todo; los asesores solo ven lo suyo + "Libres".
+interface AgentWithStats {
+  email: string
+  chatwootAgentId: number
+  stats: AgentStatsDto | null
+}
+
+async function fetchAgentStats(): Promise<AgentWithStats[]> {
+  const res = await fetch('/api/dashboard/agents', { cache: 'no-store' })
+  if (!res.ok) throw new Error('No se pudieron cargar las métricas de asesores.')
+  const data = await res.json()
+  return data.agents as AgentWithStats[]
+}
+
+// Admin-only (ver app/page.tsx y proxy.ts, /api/dashboard/* completo lo es).
+// Panel con los 4 asesores y sus métricas del día arriba; debajo, el
+// inventario completo de chats sin asignar con la opción de repartirlos.
+// Ver components/chat/conversation-list.tsx (matchesStatus) para la
+// contraparte: desde acá se ve y reparte todo; los asesores solo ven lo
+// suyo + "Libres".
 export function AdvisorControlView({ active = true }: { active?: boolean }) {
   const { conversations, loading: conversationsLoading, reload } = useChatwoot(active)
   const [agents, setAgents] = useState<Agent[] | null>(null)
   const [agentsError, setAgentsError] = useState<string | null>(null)
+  const [agentStats, setAgentStats] = useState<AgentWithStats[] | null>(null)
+  const [agentStatsLoading, setAgentStatsLoading] = useState(true)
+  const [agentStatsError, setAgentStatsError] = useState<string | null>(null)
   const [reassigningId, setReassigningId] = useState<string | null>(null)
   const [reassignError, setReassignError] = useState<string | null>(null)
-  const [selectedQueue, setSelectedQueue] = useState<QueueKey>('unassigned')
 
   useEffect(() => {
     if (!active) return
@@ -37,6 +75,28 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
       })
       .catch(() => {
         if (!cancelled) setAgentsError('No se pudo cargar la lista de asesores.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [active])
+
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    setAgentStatsLoading(true)
+    fetchAgentStats()
+      .then((list) => {
+        if (!cancelled) {
+          setAgentStats(list)
+          setAgentStatsError(null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAgentStatsError('No se pudieron cargar las métricas del día.')
+      })
+      .finally(() => {
+        if (!cancelled) setAgentStatsLoading(false)
       })
     return () => {
       cancelled = true
@@ -64,21 +124,6 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
   const unassigned = open.filter((c) => c.assigneeId == null)
   const linkedAgents = useMemo(() => (agents ?? []).filter((a) => a.chatwootAgentId !== null), [agents])
 
-  // Si el agente de la cola seleccionada desaparece de `linkedAgents` (se
-  // desvinculó de Chatwoot, o `agents` se refrescó), `activeAgent` de abajo
-  // pasa a `null` y el encabezado mostraría "Libres" mientras la lista de
-  // conversaciones seguía siendo la de ese agente puntual (`byAgent` no
-  // depende de `linkedAgents`). Volver a una cola que sí existe evita esa
-  // discrepancia entre el título y el contenido.
-  useEffect(() => {
-    if (
-      typeof selectedQueue === 'number' &&
-      !linkedAgents.some((a) => a.chatwootAgentId === selectedQueue)
-    ) {
-      setSelectedQueue('unassigned')
-    }
-  }, [selectedQueue, linkedAgents])
-
   const byAgent = useMemo(() => {
     const map = new Map<number, ChatwootConversation[]>()
     for (const c of open) {
@@ -90,12 +135,14 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
     return map
   }, [open])
 
+  const statsByAgentId = useMemo(() => {
+    const map = new Map<number, AgentStatsDto | null>()
+    for (const a of agentStats ?? []) map.set(a.chatwootAgentId, a.stats)
+    return map
+  }, [agentStats])
+
   const totalUnread = open.filter((c) => c.unreadCount > 0).length
   const loading = conversationsLoading && conversations.length === 0
-
-  const activeAgent =
-    typeof selectedQueue === 'number' ? linkedAgents.find((a) => a.chatwootAgentId === selectedQueue) ?? null : null
-  const activeConversations = selectedQueue === 'unassigned' ? unassigned : byAgent.get(selectedQueue) ?? []
 
   return (
     <>
@@ -103,6 +150,7 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
 
       <div className="flex flex-1 flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
         {agentsError && <ErrorBanner message={agentsError} />}
+        {agentStatsError && <ErrorBanner message={agentStatsError} />}
         {reassignError && <ErrorBanner message={reassignError} />}
 
         {loading ? (
@@ -118,23 +166,34 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
               agentCount={linkedAgents.length}
             />
 
-            <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-              <QueueList
-                unassignedCount={unassigned.length}
-                agents={linkedAgents}
-                byAgent={byAgent}
-                selected={selectedQueue}
-                onSelect={setSelectedQueue}
-              />
-              <QueueDetail
-                queueLabel={activeAgent ? activeAgent.email : 'Libres'}
-                icon={activeAgent ? UserCog : Inbox}
-                conversations={activeConversations}
-                agents={linkedAgents}
-                reassigningId={reassigningId}
-                onReassign={handleReassign}
-              />
+            <div>
+              <h2 className="heading-stamp mb-3 text-sm text-muted-foreground">Asesores</h2>
+              {linkedAgents.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+                  Ningún asesor vinculado a Chatwoot todavía.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {linkedAgents.map((a) => (
+                    <AdvisorCard
+                      key={a.email}
+                      agent={a}
+                      assignedCount={(byAgent.get(a.chatwootAgentId!) ?? []).length}
+                      unreadCount={(byAgent.get(a.chatwootAgentId!) ?? []).filter((c) => c.unreadCount > 0).length}
+                      stats={statsByAgentId.get(a.chatwootAgentId!) ?? null}
+                      loading={agentStatsLoading}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
+
+            <UnassignedSection
+              conversations={unassigned}
+              agents={linkedAgents}
+              reassigningId={reassigningId}
+              onReassign={handleReassign}
+            />
           </>
         )}
       </div>
@@ -163,7 +222,7 @@ function StatsRow({
     { label: 'Chats abiertos', value: openCount, icon: MessagesSquare, tone: 'text-foreground' },
     { label: 'Libres (sin asignar)', value: unassignedCount, icon: Inbox, tone: unassignedCount > 0 ? 'text-warning' : 'text-foreground' },
     { label: 'Sin contestar (equipo)', value: unreadCount, icon: Bot, tone: unreadCount > 0 ? 'text-primary' : 'text-foreground' },
-    { label: 'Asesores activos', value: agentCount, icon: Users, tone: 'text-foreground' },
+    { label: 'Asesores activos', value: agentCount, icon: User, tone: 'text-foreground' },
   ]
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -183,165 +242,194 @@ function StatsRow({
   )
 }
 
-function QueueList({
-  unassignedCount,
-  agents,
-  byAgent,
-  selected,
-  onSelect,
-}: {
-  unassignedCount: number
-  agents: Agent[]
-  byAgent: Map<number, ChatwootConversation[]>
-  selected: QueueKey
-  onSelect: (key: QueueKey) => void
-}) {
-  return (
-    <aside className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-border lg:w-72">
-      <div className="max-h-56 overflow-y-auto lg:max-h-none lg:flex-1">
-        <QueueListItem
-          active={selected === 'unassigned'}
-          onClick={() => onSelect('unassigned')}
-          icon={<Inbox className="h-4 w-4" />}
-          label="Libres"
-          sublabel="sin asignar"
-          count={unassignedCount}
-          countTone={unassignedCount > 0 ? 'warning' : 'muted'}
-        />
-        {agents.length === 0 ? (
-          <p className="px-4 py-6 text-center text-xs text-muted-foreground">
-            Ningún asesor vinculado a Chatwoot todavía.
-          </p>
-        ) : (
-          agents.map((a) => {
-            const assigned = byAgent.get(a.chatwootAgentId!) ?? []
-            const unread = assigned.filter((c) => c.unreadCount > 0).length
-            return (
-              <QueueListItem
-                key={a.email}
-                active={selected === a.chatwootAgentId}
-                onClick={() => onSelect(a.chatwootAgentId!)}
-                avatarSeed={a.email}
-                label={a.email}
-                sublabel={`${assigned.length} ${assigned.length === 1 ? 'asignado' : 'asignados'}`}
-                count={unread}
-                countTone="primary"
-              />
-            )
-          })
-        )}
-      </div>
-    </aside>
-  )
+// "0" está bien como número real (nadie respondió mensajes ayer): la
+// diferencia real con "sin dato" es null/undefined, no 0 — por eso no se
+// puede reusar directo el percentTrend de dashboard/kpis (ese asume que
+// "hoy" y "ayer" siempre existen).
+function trendPercent(today: number, yesterday: number): number | null {
+  if (yesterday === 0) return today > 0 ? 100 : null
+  return Math.round(((today - yesterday) / yesterday) * 1000) / 10
 }
 
-function QueueListItem({
-  active,
-  onClick,
-  icon,
-  avatarSeed,
-  label,
-  sublabel,
-  count,
-  countTone,
+function formatDuration(seconds: number | null): string {
+  if (seconds === null) return '—'
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest > 0 ? `${hours}h ${rest}m` : `${hours}h`
+}
+
+function AdvisorCard({
+  agent,
+  assignedCount,
+  unreadCount,
+  stats,
+  loading,
 }: {
-  active: boolean
-  onClick: () => void
-  icon?: React.ReactNode
-  avatarSeed?: string
-  label: string
-  sublabel: string
-  count: number
-  countTone: 'warning' | 'primary' | 'muted'
+  agent: Agent
+  assignedCount: number
+  unreadCount: number
+  stats: AgentStatsDto | null
+  loading: boolean
 }) {
-  const color = avatarSeed ? avatarColor(avatarSeed) : null
+  const color = avatarColor(agent.email)
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex w-full items-center gap-2.5 border-b border-border/60 px-3 py-2.5 text-left transition-colors last:border-b-0',
-        active ? 'bg-primary/10' : 'hover:bg-secondary/60',
-      )}
-    >
-      {color ? (
+    <article className="flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[0_2px_0_0_oklch(0_0_0/0.4)]">
+      <div className="flex items-center gap-2.5 border-b border-border/60 px-4 py-3">
         <div
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
           style={{ backgroundColor: color.bg, color: color.fg }}
         >
-          {label.charAt(0).toUpperCase()}
+          {agent.email.charAt(0).toUpperCase()}
         </div>
-      ) : (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground">
-          {icon}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-foreground">{agent.email}</p>
+          <p className="truncate text-[0.7rem] text-muted-foreground">
+            {assignedCount} {assignedCount === 1 ? 'chat asignado' : 'chats asignados'}
+          </p>
         </div>
-      )}
-      <div className="min-w-0 flex-1">
-        <p className={cn('truncate text-sm', active ? 'font-semibold text-foreground' : 'text-foreground')}>
-          {label}
-        </p>
-        <p className="truncate text-[0.7rem] text-muted-foreground">{sublabel}</p>
+        {unreadCount > 0 && (
+          <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-unread px-1.5 font-mono text-[0.65rem] font-bold text-primary-foreground">
+            {unreadCount}
+          </span>
+        )}
       </div>
-      {count > 0 && (
-        <span
-          className={cn(
-            'flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 font-mono text-[0.65rem] font-bold',
-            countTone === 'warning' && 'bg-warning/15 text-warning',
-            countTone === 'primary' && 'bg-unread text-primary-foreground',
-            countTone === 'muted' && 'bg-secondary text-muted-foreground',
-          )}
-        >
-          {count}
-        </span>
+
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 px-4 py-6 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Cargando métricas…
+        </div>
+      ) : !stats || !stats.available ? (
+        <p className="px-4 py-6 text-center text-xs text-muted-foreground">Métricas no disponibles.</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-px bg-border/60">
+          <Metric
+            icon={MessagesSquare}
+            label="Respondidos hoy"
+            value={String(stats.chatsRespondidos)}
+            trend={trendPercent(stats.chatsRespondidos, stats.chatsRespondidosAyer)}
+          />
+          <Metric
+            icon={Gauge}
+            label="Velocidad"
+            value={formatDuration(stats.velocidadRespuestaSegundos)}
+            trend={
+              stats.velocidadRespuestaSegundos !== null && stats.velocidadRespuestaSegundosAyer !== null
+                ? trendPercent(stats.velocidadRespuestaSegundos, stats.velocidadRespuestaSegundosAyer)
+                : null
+            }
+            invert
+          />
+          <Metric
+            icon={Target}
+            label="Tasa de respuesta"
+            value={stats.tasaRespuesta !== null ? `${stats.tasaRespuesta}%` : '—'}
+            trend={
+              stats.tasaRespuesta !== null && stats.tasaRespuestaAyer !== null
+                ? trendPercent(stats.tasaRespuesta, stats.tasaRespuestaAyer)
+                : null
+            }
+          />
+          <Metric
+            icon={Clock}
+            label="Tiempo muerto"
+            value={formatDuration(stats.tiempoMuertoSegundos)}
+            trend={trendPercent(stats.tiempoMuertoSegundos, stats.tiempoMuertoSegundosAyer)}
+            invert
+          />
+        </div>
       )}
-    </button>
+    </article>
   )
 }
 
-function QueueDetail({
-  queueLabel,
+// `invert`: para "velocidad" y "tiempo muerto", MENOS es mejor — una flecha
+// hacia arriba (más segundos que ayer) se pinta como advertencia, no como
+// logro, al revés que en "respondidos" y "tasa de respuesta".
+function Metric({
   icon: Icon,
+  label,
+  value,
+  trend,
+  invert = false,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  value: string
+  trend: number | null
+  invert?: boolean
+}) {
+  const isGood = trend !== null && (invert ? trend <= 0 : trend >= 0)
+  const TrendIcon = trend !== null && trend >= 0 ? TrendingUp : TrendingDown
+  return (
+    <div className="flex flex-col gap-1 bg-card px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
+        <Icon className="h-3 w-3" />
+        <span className="text-[0.65rem]">{label}</span>
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <span className="font-mono text-base font-bold tabular-nums text-foreground">{value}</span>
+        {trend !== null && (
+          <span
+            className={cn(
+              'inline-flex items-center gap-0.5 text-[0.65rem] font-semibold',
+              isGood ? 'text-success' : 'text-warning',
+            )}
+          >
+            <TrendIcon className="h-2.5 w-2.5" />
+            {Math.abs(trend)}%
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function UnassignedSection({
   conversations,
   agents,
   reassigningId,
   onReassign,
 }: {
-  queueLabel: string
-  icon: React.ComponentType<{ className?: string }>
   conversations: ChatwootConversation[]
   agents: Agent[]
   reassigningId: string | null
   onReassign: (conversationId: string, agentId: number | null) => void
 }) {
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border">
-      <div className="flex items-center gap-2 border-b border-border bg-card/50 px-4 py-3">
-        <Icon className="h-4 w-4 text-primary" />
-        <h2 className="heading-stamp truncate text-sm text-foreground">{queueLabel}</h2>
-        <span className="ml-auto shrink-0 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <h2 className="heading-stamp mb-3 flex items-center gap-2 text-sm text-muted-foreground">
+        <Inbox className="h-3.5 w-3.5" />
+        Libres — sin asignar
+        <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
           {conversations.length}
         </span>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {conversations.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center">
-            <MessagesSquare className="h-8 w-8 text-muted-foreground/30" />
-            <p className="text-sm text-muted-foreground">No hay chats acá en este momento.</p>
-          </div>
-        ) : (
-          conversations.map((c) => (
-            <ConversationRow
-              key={c.id}
-              conversation={c}
-              agents={agents}
-              reassigning={reassigningId === c.id}
-              onReassign={(agentId) => onReassign(c.id, agentId)}
-            />
-          ))
-        )}
-      </div>
-    </section>
+      </h2>
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {conversations.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center">
+              <MessagesSquare className="h-8 w-8 text-muted-foreground/30" />
+              <p className="text-sm text-muted-foreground">No hay chats libres en este momento.</p>
+            </div>
+          ) : (
+            conversations.map((c) => (
+              <ConversationRow
+                key={c.id}
+                conversation={c}
+                agents={agents}
+                reassigning={reassigningId === c.id}
+                onReassign={(agentId) => onReassign(c.id, agentId)}
+              />
+            ))
+          )}
+        </div>
+      </section>
+    </div>
   )
 }
 

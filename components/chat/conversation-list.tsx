@@ -48,9 +48,16 @@ const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
 // visita, no solo en la sesión actual.
 type SortOrder = 'asc' | 'desc'
 const SORT_ORDER_KEY = 'sbk:chat-sort-order'
+// Etiquetas explícitas sobre "llegada" — el criterio de este orden es
+// SIEMPRE createdAt (cuándo se abrió la conversación, a propósito, ver el
+// comentario grande de más abajo), nunca lastMessageAt (que es lo que
+// muestra la hora de cada fila). Decirlo así en la propia etiqueta evita
+// que un asesor lea "Más nuevos primero" como "el que más recientemente
+// escribió arriba" — eso es la hora que VE en la fila, no el criterio de
+// orden.
 const SORT_OPTIONS: { key: SortOrder; label: string; icon: typeof ArrowUpNarrowWide }[] = [
-  { key: 'asc', label: 'Más antiguos primero', icon: ArrowUpNarrowWide },
-  { key: 'desc', label: 'Más nuevos primero', icon: ArrowDownNarrowWide },
+  { key: 'asc', label: 'Los que llegaron primero, arriba', icon: ArrowUpNarrowWide },
+  { key: 'desc', label: 'Los que llegaron último, arriba', icon: ArrowDownNarrowWide },
 ]
 
 // Reglas del negocio (2026-08-12, corregida 2026-08-13, personalizada por
@@ -320,7 +327,10 @@ export function ConversationList({
 
                   <div className="border-b border-border px-3 py-2">
                     <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Orden
+                      Orden de llegada
+                    </p>
+                    <p className="mb-1.5 px-2 text-[0.65rem] text-muted-foreground">
+                      La hora en cada chat es de su último mensaje — este orden es de cuándo llegó, no de esa hora.
                     </p>
                     {SORT_OPTIONS.map((opt) => (
                       <button

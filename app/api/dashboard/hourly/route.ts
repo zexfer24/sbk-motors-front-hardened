@@ -12,15 +12,20 @@ import {
 } from "@/lib/caracas-time"
 import { getChatwootHourlyStats } from "@/lib/chatwoot-stats"
 
-// "Actividad por hora" del Panel — horario de atención (9am-9pm), día
-// actual, horario de Venezuela. "Ingresos generados" sale de la tabla
-// `orders`; "Interacción de clientes" y "Mensajes enviados" salen de
-// Chatwoot (ver lib/chatwoot-stats.ts) — si no responde, se devuelven
-// vacíos con `chatwootAvailable: false` en vez de inventar actividad.
+// "Actividad por hora" del Panel — las 24h del día completo (ver
+// OPERATING_HOUR_START/END en caracas-time.ts), horario de Venezuela.
+// "Ingresos generados" sale de la tabla `orders`; "Interacción de clientes"
+// y "Mensajes enviados" salen de Chatwoot (ver lib/chatwoot-stats.ts) — si
+// no responde, se devuelven vacíos con `chatwootAvailable: false` en vez de
+// inventar actividad.
 
+// Etiqueta cada bloque por la hora en la que TERMINA (01h = medianoche a
+// 1am, ..., 24h = 11pm a medianoche), no en la que empieza — así ninguna
+// barra queda rotulada "00h", que se leía como si fuera la última hora del
+// día en vez de la primera.
 const HOURS = Array.from(
   { length: OPERATING_HOUR_END - OPERATING_HOUR_START },
-  (_, i) => `${String(OPERATING_HOUR_START + i).padStart(2, "0")}h`,
+  (_, i) => `${String(OPERATING_HOUR_START + i + 1).padStart(2, "0")}h`,
 )
 
 export async function GET(request: Request) {

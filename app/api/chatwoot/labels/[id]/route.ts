@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server"
 import { getChatwootConfig } from "@/lib/chatwoot/client"
-import { deleteAccountLabel, updateAccountLabel } from "@/lib/chatwoot/labels"
+import { deleteAccountLabel, slugifyLabelTitle, updateAccountLabel } from "@/lib/chatwoot/labels"
 
 type RouteContext = { params: Promise<{ id: string }> }
 
 const NUMERIC_ID = /^[0-9]{1,18}$/
 
-// Editar/borrar una categoría — admin-only (reforzado en proxy.ts, mismo
-// patrón que POST /api/chatwoot/labels).
+// Editar una categoría — abierto a cualquier asesor autenticado (ver
+// proxy.ts). Borrar (más abajo) sigue admin-only: es lo único
+// destructivo/compartido de verdad (borra la etiqueta de TODOS los chats
+// que la tengan puesta).
 export async function PATCH(request: Request, { params }: RouteContext) {
   const { id } = await params
   if (!NUMERIC_ID.test(id)) {
@@ -18,11 +20,17 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json().catch(() => null)
-  const title = body && typeof body.title === "string" ? body.title.trim() : ""
+  const rawTitle = body && typeof body.title === "string" ? body.title.trim() : ""
   const color = body && typeof body.color === "string" ? body.color.trim() : ""
-  if (!title) return NextResponse.json({ error: "titulo_requerido" }, { status: 400 })
+  if (!rawTitle) return NextResponse.json({ error: "titulo_requerido" }, { status: 400 })
   if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
     return NextResponse.json({ error: "color_invalido" }, { status: 400 })
+  }
+
+  // Ver el comentario de slugifyLabelTitle en lib/chatwoot/labels.ts.
+  const title = slugifyLabelTitle(rawTitle)
+  if (title.length < 2) {
+    return NextResponse.json({ error: "titulo_invalido" }, { status: 400 })
   }
 
   try {
@@ -33,6 +41,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   }
 }
 
+// Borrar — admin-only (reforzado en proxy.ts).
 export async function DELETE(_request: Request, { params }: RouteContext) {
   const { id } = await params
   if (!NUMERIC_ID.test(id)) {

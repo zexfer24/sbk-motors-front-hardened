@@ -91,12 +91,13 @@ function isAdminOnlyApi(pathname: string, method: string): boolean {
   // /intervene (con su propia regla, ver ese route.ts).
   if (/^\/api\/chatwoot\/conversations\/[^/]+\/assign$/.test(pathname)) return true
   if (pathname === "/api/agents") return true
-  // Categorías (labels): cualquiera puede leer el catálogo y
-  // aplicar/quitar etiquetas de una conversación (con su propio límite en
-  // guardConversationWrite), pero crear una categoría nueva es admin-only —
-  // es contenido compartido por toda la empresa, igual que quick-replies.
-  if (pathname === "/api/chatwoot/labels" && method !== "GET") return true
-  if (/^\/api\/chatwoot\/labels\/[^/]+$/.test(pathname)) return true
+  // Categorías (labels): cualquiera puede leer el catálogo, aplicar/quitar
+  // etiquetas de una conversación, y ahora también CREAR y EDITAR el
+  // catálogo (título/color) — a diferencia de quick-replies, esto lo pidió
+  // el negocio explícitamente abierto a todo el equipo. Solo BORRAR sigue
+  // admin-only: es lo único que afecta a cualquier chat que ya tenga esa
+  // etiqueta puesta, no solo a quien la crea.
+  if (/^\/api\/chatwoot\/labels\/[^/]+$/.test(pathname) && method === "DELETE") return true
   return false
 }
 

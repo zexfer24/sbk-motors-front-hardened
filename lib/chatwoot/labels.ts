@@ -17,6 +17,23 @@
 
 import { chatwootFetch } from "@/lib/chatwoot/client"
 
+// Chatwoot valida el título contra `\A[\p{L}\p{N}]+[\p{L}\p{N}_-]+\Z`
+// (confirmado contra su código fuente real, app/models/label.rb +
+// lib/regex_helper.rb) y lo pasa a minúsculas antes de validar — un
+// espacio, mayúscula o símbolo cualquiera dispara un 400 de su lado. En vez
+// de dejar que "Repuestos moto" truene con un error críptico, se limpia acá
+// antes de mandarlo: espacios a guion, todo lo demás fuera de ese charset
+// se descarta, y no puede empezar con guion/guion bajo (el regex exige que
+// arranque con letra o número).
+export function slugifyLabelTitle(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^\p{L}\p{N}_-]+/gu, "")
+    .replace(/^[-_]+/, "")
+}
+
 export interface ChatwootLabel {
   id: number
   title: string

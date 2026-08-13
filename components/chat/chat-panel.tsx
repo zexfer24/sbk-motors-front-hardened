@@ -594,19 +594,19 @@ export function ChatPanel({
                       })}
                     </div>
                   )}
-                  {user?.role === 'admin' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLabelsPickerOpen(false)
-                        setLabelsManagerOpen(true)
-                      }}
-                      className="flex w-full items-center gap-2 border-t border-border px-3 py-2.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                    >
-                      <Settings2 className="h-3.5 w-3.5" />
-                      Administrar categorías
-                    </button>
-                  )}
+                  {/* Crear/editar categorías ya es libre para todo el equipo — solo
+                      borrar sigue admin-only, gateado dentro del propio modal. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLabelsPickerOpen(false)
+                      setLabelsManagerOpen(true)
+                    }}
+                    className="flex w-full items-center gap-2 border-t border-border px-3 py-2.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  >
+                    <Settings2 className="h-3.5 w-3.5" />
+                    Administrar categorías
+                  </button>
                 </div>
               </>
             )}
