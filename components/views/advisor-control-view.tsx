@@ -348,7 +348,7 @@ function AdvisorCard({
         disabled={activo === null}
         onClick={() => onToggleActive(!activo)}
         className={cn(
-          'flex items-center justify-between gap-2 border-b border-border/60 px-4 py-2 text-xs transition-colors disabled:cursor-default disabled:opacity-60',
+          'group flex items-center justify-between gap-2 border-b border-border/60 px-4 py-2.5 text-xs transition-colors disabled:cursor-default disabled:opacity-60',
           activo ? 'bg-success/10 text-success hover:bg-success/15' : 'bg-warning/10 text-warning hover:bg-warning/15',
         )}
       >
@@ -357,14 +357,14 @@ function AdvisorCard({
         </span>
         <span
           className={cn(
-            'relative h-5 w-9 shrink-0 rounded-full transition-colors',
+            'relative h-5 w-9 shrink-0 rounded-full transition-colors group-active:scale-95',
             activo ? 'bg-success' : 'bg-muted-foreground/40',
           )}
         >
           <span
             className={cn(
-              'absolute top-0.5 h-4 w-4 rounded-full bg-card transition-transform',
-              activo ? 'translate-x-4' : 'translate-x-0.5',
+              'absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-card shadow-sm transition-transform duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]',
+              activo ? 'translate-x-4' : 'translate-x-0',
             )}
           />
         </span>
