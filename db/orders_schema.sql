@@ -72,3 +72,28 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS cashea_initial_usd NUMERIC(10, 2);
 -- ============================================================================
 
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_cedula TEXT;
+
+-- ============================================================================
+-- MIGRACIÓN — acceso de asesores a Ventas (antes admin-only), número de guía
+-- opcional, y flujo de solicitud de devolución/confirmación (el asesor
+-- solicita, el admin ejecuta — ver app/api/orders/route.ts,
+-- app/api/orders/[id]/request/route.ts y db/order_events_schema.sql).
+-- ============================================================================
+-- advisor_email: quién cerró la venta, identificado por su sesión (no por el
+-- nombre visible en Chatwoot, que puede repetirse o cambiar) — así el asesor
+-- puede filtrar "mis ventas" de forma confiable. Ventas creadas antes de esta
+-- columna quedan con NULL: solo el admin las ve hasta que se identifiquen.
+--
+-- deleted_at: borrado lógico, no físico — eliminar una venta nunca debe
+-- romper la referencia de order_events (el log de auditoría tiene que
+-- sobrevivir aunque la venta se borre de la vista).
+-- ============================================================================
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS advisor_email TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS pending_request TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS pending_request_by TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS pending_request_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_orders_advisor_email ON orders (advisor_email);

@@ -13,11 +13,12 @@ type Role = "admin" | "asesor"
 // Único punto que decide "¿quién eres y qué puedes ver?" para todo el
 // sistema — corre antes de cualquier página o ruta /api/*.
 //
-// Solo dos roles: "admin" (dueños/supervisor, ven todo) y "asesor" (solo
-// Chats, Clientes e Inventario — Panel y Ventas quedan ocultos y sus
-// endpoints devuelven 403 aunque alguien intente pegarle directo a la
-// API). El rol vive en `app_metadata` de Supabase Auth (ver
-// scripts/manage-users.mjs), no en una tabla aparte.
+// Solo dos roles: "admin" (dueños/supervisor, ven todo) y "asesor" (Chats,
+// Clientes, Inventario y Ventas — esta última acotada a sus propias ventas,
+// ver app/api/orders/route.ts). Panel y Asesores (Centro de Control) quedan
+// ocultos para asesor y sus endpoints devuelven 403 aunque alguien intente
+// pegarle directo a la API. El rol vive en `app_metadata` de Supabase Auth
+// (ver scripts/manage-users.mjs), no en una tabla aparte.
 
 // /api/chatwoot/webhook también es pública: la llama Chatwoot, no un
 // navegador con sesión — se protege con su propio secreto (?token=...),
@@ -81,10 +82,15 @@ function applyCsp(response: NextResponse, csp: string): NextResponse {
 
 function isAdminOnlyApi(pathname: string, method: string): boolean {
   if (pathname.startsWith("/api/dashboard")) return true
-  if (pathname === "/api/orders" && method === "GET") return true
-  // /api/orders/:id (PATCH de Confirmar/Devolución) — admin solo. El POST a
-  // /api/orders (crear la venta) NO cae acá, lo necesitan los asesores para
-  // cerrar ventas desde el chat.
+  // GET /api/orders (Ventas) ya NO es admin-only: cada asesor ve sus propias
+  // ventas (filtrado por advisor_email dentro del route.ts, no acá), el
+  // admin ve todas y puede acotar por fecha. El POST (crear la venta) tampoco
+  // cae acá, lo necesitan los asesores para cerrar ventas desde el chat.
+  //
+  // /api/orders/:id (PATCH de Confirmar/Devolución, DELETE de eliminar) —
+  // admin solo: ejecutar esas acciones sigue siendo exclusivo del admin, el
+  // asesor solo puede SOLICITARlas vía /api/orders/:id/request (esa ruta no
+  // cae en este regex a propósito, porque cualquier asesor la necesita).
   if (/^\/api\/orders\/[^/]+$/.test(pathname)) return true
   // Respuestas rápidas: cualquier asesor autenticado las puede LEER (las
   // usa en el chat), pero crear/editar/borrar es admin-only — son

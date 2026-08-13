@@ -1,21 +1,54 @@
 'use client'
 
-import { useId } from 'react'
-import { ImageOff, Receipt, X } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
+import { History, ImageOff, Receipt, X } from 'lucide-react'
 import { PAYMENT_METHOD_LABELS, ORDER_STATUS_LABELS } from '@/lib/types/order'
-import type { OrderDb } from '@/lib/types/order'
+import type { OrderDb, OrderEvent, OrderEventType } from '@/lib/types/order'
+import { fetchOrderEvents } from '@/lib/api/orders'
 import { formatBs, formatUsd } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 
 interface OrderDetailModalProps {
   order: OrderDb | null
   onClose: () => void
+  isAdmin: boolean
+}
+
+const EVENT_LABELS: Record<OrderEventType, string> = {
+  cierre: 'Cerró la venta',
+  solicitud_devolucion: 'Solicitó devolución',
+  solicitud_confirmacion: 'Solicitó confirmación',
+  devolucion_ejecutada: 'Ejecutó la devolución',
+  confirmacion_ejecutada: 'Confirmó la venta',
+  eliminada: 'Eliminó la venta',
 }
 
 // Solo lectura — pensado para que el asesor copie los datos a su sistema
 // de facturación real, que trabaja en Bs.
-export function OrderDetailModal({ order, onClose }: OrderDetailModalProps) {
+export function OrderDetailModal({ order, onClose, isAdmin }: OrderDetailModalProps) {
   const titleId = useId()
+  const [events, setEvents] = useState<OrderEvent[]>([])
+  const [eventsLoading, setEventsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!order) {
+      setEvents([])
+      return
+    }
+    let cancelled = false
+    setEventsLoading(true)
+    fetchOrderEvents(order.id)
+      .then((list) => {
+        if (!cancelled) setEvents(list)
+      })
+      .finally(() => {
+        if (!cancelled) setEventsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [order])
+
   if (!order) return null
 
   const paymentLabel =
@@ -77,6 +110,14 @@ export function OrderDetailModal({ order, onClose }: OrderDetailModalProps) {
             <span className="font-mono text-xs text-muted-foreground">{formatDate(order.createdAt)}</span>
           </div>
 
+          {order.pendingRequest && (
+            <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+              {order.pendingRequest === 'devolucion' ? 'Devolución solicitada' : 'Confirmación solicitada'}
+              {order.pendingRequestBy ? ` por ${order.pendingRequestBy}` : ''} — pendiente de que{' '}
+              {isAdmin ? 'la ejecutes' : 'un admin la ejecute'}.
+            </p>
+          )}
+
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
             <Field label="Asesor" value={order.advisorName || '—'} />
             <Field label="Cliente" value={order.customerName} />
@@ -85,6 +126,7 @@ export function OrderDetailModal({ order, onClose }: OrderDetailModalProps) {
             <Field label="Ubicación" value={`${order.city}, ${order.state}`} />
             <Field label="Dirección" value={order.address} span2 />
             <Field label="Método de pago" value={paymentLabel} />
+            {order.trackingNumber && <Field label="Número de guía" value={order.trackingNumber} mono />}
             {order.paymentMethod === 'cashea' && (
               <>
                 {casheaPercent !== null && (
@@ -96,9 +138,9 @@ export function OrderDetailModal({ order, onClose }: OrderDetailModalProps) {
                 {order.casheaOrderNumber && (
                   <Field label="N.° de orden Cashea" value={order.casheaOrderNumber} mono />
                 )}
-                {order.shippingInfo && <Field label="Datos de envío" value={order.shippingInfo} span2 />}
               </>
             )}
+            {order.shippingInfo && <Field label="Datos de envío" value={order.shippingInfo} span2 />}
           </dl>
 
           <div className="flex flex-col gap-2">
@@ -150,6 +192,29 @@ export function OrderDetailModal({ order, onClose }: OrderDetailModalProps) {
                 <ImageOff className="h-4 w-4 shrink-0" />
                 Sin captura.
               </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <History className="h-3.5 w-3.5" />
+              Historial
+            </span>
+            {eventsLoading ? (
+              <p className="text-xs text-muted-foreground">Cargando…</p>
+            ) : events.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Sin eventos registrados.</p>
+            ) : (
+              <ul className="flex flex-col gap-1.5 rounded-lg border border-border bg-background/50 p-2.5">
+                {events.map((ev) => (
+                  <li key={ev.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-foreground">
+                      {EVENT_LABELS[ev.eventType]} <span className="text-muted-foreground">— {ev.actorEmail}</span>
+                    </span>
+                    <span className="shrink-0 font-mono text-muted-foreground">{formatDate(ev.createdAt)}</span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </div>

@@ -1,48 +1,75 @@
 import { NextResponse } from "next/server"
 import { serverError } from "@/lib/api-errors"
 import { createOrder, listOrders } from "@/lib/api/orders-demo-store"
+import { addOrderEvent } from "@/lib/api/order-events-store"
 import { getSupabase } from "@/lib/supabase/client"
 import { getTodayRate } from "@/lib/bcv-rate"
 import { computeCasheaTotalUsd, computeOrderTotals } from "@/lib/order-totals"
+import { caracasDayBoundsUtc, isValidDateStr } from "@/lib/caracas-time"
+import { SELECTABLE_PAYMENT_METHODS } from "@/lib/types/order"
 import type { OrderItem, PaymentMethod } from "@/lib/types/order"
-import { USER_EMAIL_HEADER } from "@/lib/auth-headers"
+import { USER_EMAIL_HEADER, USER_ROLE_HEADER } from "@/lib/auth-headers"
 import { authorizeConversationWrite } from "@/lib/chatwoot/authz"
+import { chatwootFetch, getChatwootConfig } from "@/lib/chatwoot/client"
 
 // Único punto de entrada que el navegador conoce (/api/orders). Habla
 // directo con Supabase (tabla orders) si las credenciales están
 // configuradas; si no, usa el store en memoria (vacío, sin datos mock).
 // Ver db/orders_schema.sql.
 //
-// Solo lectura y alta — no hay edición ni borrado desde el front. Las
-// ventas solo se crean desde el flujo de "Cerrar venta" en el chat.
+// Solo lectura y alta — no hay edición desde el front (el borrado es lógico,
+// ver DELETE en app/api/orders/[id]/route.ts). Las ventas solo se crean
+// desde el flujo de "Cerrar venta" en el chat.
+//
+// LECTURA ya no es admin-only (antes lo era, ver proxy.ts): un asesor ve
+// únicamente sus propias ventas (advisor_email = su sesión), sin filtro de
+// fecha; el admin ve todas y puede acotar por rango de fechas (?from=&to=,
+// YYYY-MM-DD, calendario de Caracas).
 
 const SELECT_COLUMNS =
-  "id, conversationId:conversation_id, advisorName:advisor_name, customerName:customer_name, " +
-  "customerPhone:customer_phone, customerCedula:customer_cedula, state, city, address, " +
-  "paymentMethod:payment_method, paymentMethodOther:payment_method_other, " +
-  "shippingInfo:shipping_info, captureUrl:capture_url, " +
+  "id, conversationId:conversation_id, advisorName:advisor_name, advisorEmail:advisor_email, " +
+  "customerName:customer_name, customerPhone:customer_phone, customerCedula:customer_cedula, " +
+  "state, city, address, paymentMethod:payment_method, paymentMethodOther:payment_method_other, " +
+  "shippingInfo:shipping_info, trackingNumber:tracking_number, captureUrl:capture_url, " +
   "items, casheaOrderNumber:cashea_order_number, casheaTotalUsd:cashea_total_usd, " +
   "casheaInitialUsd:cashea_initial_usd, totalBs:total_bs, exchangeRate:exchange_rate, " +
-  "totalUsd:total_usd, status, createdAt:created_at"
+  "totalUsd:total_usd, status, pendingRequest:pending_request, pendingRequestBy:pending_request_by, " +
+  "pendingRequestAt:pending_request_at, createdAt:created_at"
 
-const PAYMENT_METHODS: PaymentMethod[] = ["pago_movil", "zelle", "efectivo", "cashea", "otro"]
+export async function GET(request: Request) {
+  const isAdmin = request.headers.get(USER_ROLE_HEADER) === "admin"
+  const email = request.headers.get(USER_EMAIL_HEADER)?.trim() ?? ""
+  const { searchParams } = new URL(request.url)
+  const from = searchParams.get("from")
+  const to = searchParams.get("to")
 
-export async function GET() {
   const supabase = getSupabase()
 
   if (supabase) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("orders")
       .select(SELECT_COLUMNS)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false })
 
+    if (!isAdmin) {
+      query = query.eq("advisor_email", email)
+    } else {
+      if (from && isValidDateStr(from)) query = query.gte("created_at", caracasDayBoundsUtc(from).startUtc)
+      if (to && isValidDateStr(to)) query = query.lt("created_at", caracasDayBoundsUtc(to).endUtc)
+    }
+
+    const { data, error } = await query
     if (error) {
       return serverError("error_supabase", "orders", error)
     }
     return NextResponse.json({ orders: data, source: "supabase" })
   }
 
-  return NextResponse.json({ orders: listOrders(), source: "demo" })
+  return NextResponse.json({
+    orders: listOrders(isAdmin ? undefined : { advisorEmail: email }),
+    source: "demo",
+  })
 }
 
 function isValidItems(items: unknown): items is OrderItem[] {
@@ -59,6 +86,31 @@ function isValidItems(items: unknown): items is OrderItem[] {
       it.quantity > 0
     )
   })
+}
+
+// Best-effort: si el nombre del cliente cambió respecto al contacto real de
+// Chatwoot, se sincroniza allá también. Nunca bloquea ni revierte la venta
+// (ya se guardó) si esto falla — un contacto desincronizado es mucho menos
+// grave que perder o duplicar una venta ya cerrada.
+async function syncContactNameToChatwoot(conversationId: string, customerName: string): Promise<void> {
+  if (!getChatwootConfig()) return
+  try {
+    const raw = await chatwootFetch<Record<string, unknown>>(`/conversations/${conversationId}`, {
+      cache: "no-store",
+    })
+    const meta = (raw.meta as Record<string, unknown>) ?? {}
+    const sender = meta.sender as Record<string, unknown> | null | undefined
+    const contactId = sender && sender.id != null ? Number(sender.id) : null
+    const currentName = sender && typeof sender.name === "string" ? sender.name : null
+    if (contactId == null || currentName === null || currentName === customerName) return
+
+    await chatwootFetch(`/contacts/${contactId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: customerName }),
+    })
+  } catch (err) {
+    console.error("[api] orders: no se pudo sincronizar el nombre del contacto en Chatwoot", err)
+  }
 }
 
 export async function POST(request: Request) {
@@ -89,6 +141,7 @@ export async function POST(request: Request) {
     paymentMethod,
     paymentMethodOther,
     shippingInfo,
+    trackingNumber,
     captureUrl,
     items,
     casheaOrderNumber,
@@ -129,7 +182,7 @@ export async function POST(request: Request) {
   if (typeof address !== "string" || address.trim().length === 0) {
     return NextResponse.json({ error: "direccion_requerida" }, { status: 400 })
   }
-  if (typeof paymentMethod !== "string" || !PAYMENT_METHODS.includes(paymentMethod as PaymentMethod)) {
+  if (typeof paymentMethod !== "string" || !SELECTABLE_PAYMENT_METHODS.includes(paymentMethod as PaymentMethod)) {
     return NextResponse.json({ error: "metodo_pago_invalido" }, { status: 400 })
   }
   if (paymentMethodOther !== null && typeof paymentMethodOther !== "string") {
@@ -137,6 +190,9 @@ export async function POST(request: Request) {
   }
   if (typeof shippingInfo !== "string") {
     return NextResponse.json({ error: "envio_invalido" }, { status: 400 })
+  }
+  if (trackingNumber !== null && trackingNumber !== undefined && typeof trackingNumber !== "string") {
+    return NextResponse.json({ error: "numero_guia_invalido" }, { status: 400 })
   }
   if (captureUrl !== null && typeof captureUrl !== "string") {
     return NextResponse.json({ error: "captura_invalida" }, { status: 400 })
@@ -189,6 +245,7 @@ export async function POST(request: Request) {
   const input = {
     conversationId: conversationId.trim(),
     advisorName,
+    advisorEmail: sessionEmail,
     customerName: customerName.trim(),
     customerPhone: customerPhone.trim(),
     customerCedula,
@@ -198,6 +255,7 @@ export async function POST(request: Request) {
     paymentMethod: paymentMethod as PaymentMethod,
     paymentMethodOther: paymentMethodOther ? (paymentMethodOther as string).trim() : null,
     shippingInfo: shippingInfo.trim(),
+    trackingNumber: typeof trackingNumber === "string" && trackingNumber.trim() ? trackingNumber.trim() : null,
     captureUrl: captureUrl as string | null,
     items,
     casheaOrderNumber: casheaOrderNumberClean,
@@ -210,6 +268,8 @@ export async function POST(request: Request) {
   }
 
   const supabase = getSupabase()
+  let orderId: string
+  let responseBody: unknown
 
   if (supabase) {
     const { data, error } = await supabase
@@ -217,6 +277,7 @@ export async function POST(request: Request) {
       .insert({
         conversation_id: input.conversationId,
         advisor_name: input.advisorName,
+        advisor_email: input.advisorEmail,
         customer_name: input.customerName,
         customer_phone: input.customerPhone,
         customer_cedula: input.customerCedula,
@@ -226,6 +287,7 @@ export async function POST(request: Request) {
         payment_method: input.paymentMethod,
         payment_method_other: input.paymentMethodOther,
         shipping_info: input.shippingInfo,
+        tracking_number: input.trackingNumber,
         capture_url: input.captureUrl,
         items: input.items,
         cashea_order_number: input.casheaOrderNumber,
@@ -242,9 +304,16 @@ export async function POST(request: Request) {
     if (error) {
       return serverError("error_supabase", "orders", error)
     }
-    return NextResponse.json(data, { status: 201 })
+    orderId = String((data as unknown as { id: string }).id)
+    responseBody = data
+  } else {
+    const order = createOrder(input)
+    orderId = order.id
+    responseBody = order
   }
 
-  const order = createOrder(input)
-  return NextResponse.json(order, { status: 201 })
+  await addOrderEvent(orderId, "cierre", sessionEmail, advisorName)
+  await syncContactNameToChatwoot(input.conversationId, input.customerName)
+
+  return NextResponse.json(responseBody, { status: 201 })
 }

@@ -10,6 +10,7 @@ import {
   Loader2,
   MessageSquareText,
   Paperclip,
+  Pencil,
   Phone,
   Reply,
   Settings2,
@@ -17,6 +18,7 @@ import {
   Smile,
   StickyNote,
   Tag,
+  Trash2,
   UserCog,
   X,
 } from 'lucide-react'
@@ -32,7 +34,13 @@ import { avatarColor } from '@/lib/avatar-color'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { useQuickReplies } from '@/lib/hooks/use-quick-replies'
 import { fetchAgents, type Agent, type ChatwootLabel } from '@/lib/api/chatwoot'
-import { addNote, fetchNotes, type ChatNoteDto } from '@/lib/api/chat-notes'
+import {
+  addNote,
+  deleteNote as deleteNoteApi,
+  fetchNotes,
+  updateNote as updateNoteApi,
+  type ChatNoteDto,
+} from '@/lib/api/chat-notes'
 import { cn } from '@/lib/utils'
 
 // Alto máximo del compositor antes de que aparezca su propio scroll interno
@@ -141,6 +149,9 @@ export function ChatPanel({
   const [notesError, setNotesError] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [noteSaving, setNoteSaving] = useState(false)
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const [noteEditSaving, setNoteEditSaving] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -468,6 +479,45 @@ export function ChatPanel({
     }
   }
 
+  function handleStartEditNote(note: ChatNoteDto) {
+    setEditingNoteId(note.id)
+    setEditDraft(note.content)
+  }
+
+  function handleCancelEditNote() {
+    setEditingNoteId(null)
+    setEditDraft('')
+  }
+
+  async function handleSaveEditNote() {
+    const content = editDraft.trim()
+    if (!content || !editingNoteId || noteEditSaving) return
+    setNoteEditSaving(true)
+    setNotesError(null)
+    try {
+      const result = await updateNoteApi(editingNoteId, content)
+      if ('error' in result) {
+        setNotesError('No se pudo editar la nota.')
+        return
+      }
+      setNotes((prev) => (prev ?? []).map((n) => (n.id === result.id ? result : n)))
+      setEditingNoteId(null)
+      setEditDraft('')
+    } finally {
+      setNoteEditSaving(false)
+    }
+  }
+
+  async function handleDeleteNote(id: string) {
+    const previous = notes
+    setNotes((prev) => (prev ?? []).filter((n) => n.id !== id))
+    const result = await deleteNoteApi(id)
+    if ('error' in result) {
+      setNotes(previous)
+      setNotesError('No se pudo borrar la nota.')
+    }
+  }
+
   function handlePickImage() {
     setImageError(null)
     fileInputRef.current?.click()
@@ -721,14 +771,72 @@ export function ChatPanel({
                     </div>
                   ) : notes && notes.length > 0 ? (
                     <div className="flex flex-col gap-2">
-                      {notes.map((n) => (
-                        <div key={n.id} className="rounded-md bg-secondary/60 px-2.5 py-2 text-xs">
-                          <p className="whitespace-pre-wrap text-foreground">{n.content}</p>
-                          <p className="mt-1 text-[0.65rem] text-muted-foreground">
-                            {n.authorEmail} · {new Date(n.createdAt).toLocaleString('es-VE')}
-                          </p>
-                        </div>
-                      ))}
+                      {notes.map((n) => {
+                        const isMine = user?.email === n.authorEmail
+                        const isEditing = editingNoteId === n.id
+                        return (
+                          <div key={n.id} className="rounded-md bg-secondary/60 px-2.5 py-2 text-xs">
+                            {isEditing ? (
+                              <div className="flex flex-col gap-1.5">
+                                <textarea
+                                  value={editDraft}
+                                  onChange={(e) => setEditDraft(e.target.value)}
+                                  rows={2}
+                                  autoFocus
+                                  className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/30"
+                                />
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={handleCancelEditNote}
+                                    className="rounded px-2 py-1 text-[0.65rem] text-muted-foreground hover:text-foreground"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveEditNote}
+                                    disabled={!editDraft.trim() || noteEditSaving}
+                                    className="rounded bg-primary px-2 py-1 text-[0.65rem] font-semibold text-primary-foreground disabled:opacity-40"
+                                  >
+                                    {noteEditSaving ? 'Guardando…' : 'Guardar'}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="whitespace-pre-wrap text-foreground">{n.content}</p>
+                                  {isMine && (
+                                    <div className="flex shrink-0 items-center gap-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleStartEditNote(n)}
+                                        title="Editar nota"
+                                        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                                      >
+                                        <Pencil className="h-3 w-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteNote(n.id)}
+                                        title="Borrar nota"
+                                        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:text-primary"
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                                <p className="mt-1 text-[0.65rem] text-muted-foreground">
+                                  {n.authorEmail} · {new Date(n.createdAt).toLocaleString('es-VE')}
+                                  {n.updatedAt ? ' · editada' : ''}
+                                </p>
+                              </>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   ) : (
                     <p className="py-2 text-xs text-muted-foreground">

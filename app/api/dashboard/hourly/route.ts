@@ -44,6 +44,7 @@ export async function GET(request: Request) {
     const { data, error } = await supabase
       .from("orders")
       .select("createdAt:created_at, totalUsd:total_usd")
+      .is("deleted_at", null)
       .gte("created_at", bounds.startUtc)
       .lt("created_at", bounds.endUtc)
 

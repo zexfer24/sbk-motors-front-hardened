@@ -22,7 +22,10 @@ async function getOrderStatsByPhone(): Promise<Map<string, { ordersCount: number
 
   let rows: { phone: string; totalUsd: number }[]
   if (supabase) {
-    const { data, error } = await supabase.from("orders").select("phone:customer_phone, totalUsd:total_usd")
+    const { data, error } = await supabase
+      .from("orders")
+      .select("phone:customer_phone, totalUsd:total_usd")
+      .is("deleted_at", null)
     if (error) return stats
     rows = (data ?? []).map((o) => ({ phone: o.phone as string, totalUsd: Number(o.totalUsd) }))
   } else {

@@ -7,29 +7,54 @@ interface OrdersTableProps {
   orders: OrderDb[]
   onView: (order: OrderDb) => void
   onUpdateStatus: (id: string, status: OrderStatus) => Promise<unknown>
+  onRequestAction: (id: string, type: 'devolucion' | 'confirmacion') => Promise<unknown>
+  isAdmin: boolean
+  selected: Set<string>
+  onToggleSelect: (id: string) => void
+  onToggleSelectAll: () => void
 }
 
-const columns = [
-  'Fecha',
-  'Asesor',
-  'Cliente',
-  'Teléfono',
-  'Ubicación',
-  'Artículos',
-  'Total',
-  'Método de pago',
-  'Captura',
-  'Estado',
-  'Acciones',
-]
+export function OrdersTable({
+  orders,
+  onView,
+  onUpdateStatus,
+  onRequestAction,
+  isAdmin,
+  selected,
+  onToggleSelect,
+  onToggleSelectAll,
+}: OrdersTableProps) {
+  const columns = [
+    'Fecha',
+    'Asesor',
+    'Cliente',
+    'Teléfono',
+    'Ubicación',
+    'Artículos',
+    'Total',
+    'Método de pago',
+    'Captura',
+    'Estado',
+    'Acciones',
+  ]
 
-export function OrdersTable({ orders, onView, onUpdateStatus }: OrdersTableProps) {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1180px] border-collapse text-left">
           <thead>
             <tr className="border-b border-border bg-secondary/40">
+              {isAdmin && (
+                <th className="w-10 px-4 py-3 sm:px-6">
+                  <input
+                    type="checkbox"
+                    aria-label="Seleccionar todas las ventas visibles"
+                    checked={orders.length > 0 && selected.size === orders.length}
+                    onChange={onToggleSelectAll}
+                    className="h-3.5 w-3.5 rounded border-input accent-primary"
+                  />
+                </th>
+              )}
               {columns.map((col) => (
                 <th
                   key={col}
@@ -48,6 +73,10 @@ export function OrdersTable({ orders, onView, onUpdateStatus }: OrdersTableProps
                 index={i}
                 onView={onView}
                 onUpdateStatus={onUpdateStatus}
+                onRequestAction={onRequestAction}
+                isAdmin={isAdmin}
+                selected={selected.has(order.id)}
+                onToggleSelect={() => onToggleSelect(order.id)}
               />
             ))}
           </tbody>

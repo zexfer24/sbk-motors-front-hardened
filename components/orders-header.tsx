@@ -1,6 +1,6 @@
 'use client'
 
-import { Receipt, CalendarCheck, type LucideIcon } from 'lucide-react'
+import { Receipt, CalendarCheck, CalendarRange, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { DataSource } from '@/lib/api/shared'
 
@@ -16,15 +16,29 @@ interface OrdersHeaderProps {
   totalOrders: number
   ordersToday: number
   source: DataSource
+  isAdmin: boolean
+  dateFrom: string
+  dateTo: string
+  onDateFromChange: (value: string) => void
+  onDateToChange: (value: string) => void
 }
 
-export function OrdersHeader({ totalOrders, ordersToday, source }: OrdersHeaderProps) {
+export function OrdersHeader({
+  totalOrders,
+  ordersToday,
+  source,
+  isAdmin,
+  dateFrom,
+  dateTo,
+  onDateFromChange,
+  onDateToChange,
+}: OrdersHeaderProps) {
   const usingSupabase = source === 'supabase'
 
   const stats: Stat[] = [
     {
       icon: Receipt,
-      label: 'Ventas totales',
+      label: isAdmin ? 'Ventas totales' : 'Mis ventas',
       value: totalOrders,
       accent: 'text-foreground',
       iconBg: 'bg-metal/40 text-foreground',
@@ -94,6 +108,47 @@ export function OrdersHeader({ totalOrders, ordersToday, source }: OrdersHeaderP
           )
         })}
       </div>
+
+      {/* Filtro por calendario — admin-only. El asesor solo ve "Mis
+          ventas" completas, sin acotar por fecha (ver orders-view.tsx y
+          app/api/orders/route.ts). */}
+      {isAdmin && (
+        <div className="flex flex-wrap items-center gap-2">
+          <CalendarRange className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            Desde
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => onDateFromChange(e.target.value)}
+              max={dateTo || undefined}
+              className="rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/30"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            Hasta
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => onDateToChange(e.target.value)}
+              min={dateFrom || undefined}
+              className="rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/30"
+            />
+          </label>
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => {
+                onDateFromChange('')
+                onDateToChange('')
+              }}
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Limpiar
+            </button>
+          )}
+        </div>
+      )}
     </header>
   )
 }

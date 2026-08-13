@@ -76,6 +76,7 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
   const [agentStatsError, setAgentStatsError] = useState<string | null>(null)
   const [reassigningId, setReassigningId] = useState<string | null>(null)
   const [reassignError, setReassignError] = useState<string | null>(null)
+  const [onlyUnanswered, setOnlyUnanswered] = useState(false)
 
   useEffect(() => {
     if (!active) return
@@ -151,6 +152,7 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
   // completo de lo sin asignar para que el admin reparta, no solo la cola
   // urgente de autoservicio de los asesores.
   const unassigned = open.filter((c) => c.assigneeId == null)
+  const unassignedFiltered = onlyUnanswered ? unassigned.filter((c) => c.unreadCount > 0) : unassigned
   const linkedAgents = useMemo(() => (agents ?? []).filter((a) => a.chatwootAgentId !== null), [agents])
 
   const byAgent = useMemo(() => {
@@ -226,10 +228,13 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
             </div>
 
             <UnassignedSection
-              conversations={unassigned}
+              conversations={unassignedFiltered}
+              totalCount={unassigned.length}
               agents={linkedAgents}
               reassigningId={reassigningId}
               onReassign={handleReassign}
+              onlyUnanswered={onlyUnanswered}
+              onToggleOnlyUnanswered={() => setOnlyUnanswered((v) => !v)}
             />
           </>
         )}
@@ -463,30 +468,54 @@ function Metric({
 
 function UnassignedSection({
   conversations,
+  totalCount,
   agents,
   reassigningId,
   onReassign,
+  onlyUnanswered,
+  onToggleOnlyUnanswered,
 }: {
   conversations: ChatwootConversation[]
+  totalCount: number
   agents: Agent[]
   reassigningId: string | null
   onReassign: (conversationId: string, agentId: number | null) => void
+  onlyUnanswered: boolean
+  onToggleOnlyUnanswered: () => void
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <h2 className="heading-stamp mb-3 flex items-center gap-2 text-sm text-muted-foreground">
-        <Inbox className="h-3.5 w-3.5" />
-        Libres — sin asignar
-        <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
-          {conversations.length}
-        </span>
-      </h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="heading-stamp flex items-center gap-2 text-sm text-muted-foreground">
+          <Inbox className="h-3.5 w-3.5" />
+          Libres — sin asignar
+          <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            {totalCount}
+          </span>
+        </h2>
+        <button
+          type="button"
+          onClick={onToggleOnlyUnanswered}
+          aria-pressed={onlyUnanswered}
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+            onlyUnanswered
+              ? 'border-primary/40 bg-primary/10 text-primary'
+              : 'border-border bg-card text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <Bot className="h-3 w-3" />
+          Sin contestar
+        </button>
+      </div>
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border">
         <div className="min-h-0 flex-1 overflow-y-auto">
           {conversations.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-12 text-center">
               <MessagesSquare className="h-8 w-8 text-muted-foreground/30" />
-              <p className="text-sm text-muted-foreground">No hay chats libres en este momento.</p>
+              <p className="text-sm text-muted-foreground">
+                {onlyUnanswered ? 'No hay chats libres sin contestar.' : 'No hay chats libres en este momento.'}
+              </p>
             </div>
           ) : (
             conversations.map((c) => (

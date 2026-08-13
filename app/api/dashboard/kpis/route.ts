@@ -53,11 +53,13 @@ export async function GET(request: Request) {
       supabase
         .from("orders")
         .select("total_usd")
+        .is("deleted_at", null)
         .gte("created_at", todayBounds.startUtc)
         .lt("created_at", todayBounds.endUtc),
       supabase
         .from("orders")
         .select("total_usd")
+        .is("deleted_at", null)
         .gte("created_at", yesterdayBounds.startUtc)
         .lt("created_at", yesterdayBounds.endUtc),
     ])

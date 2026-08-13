@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { CheckCircle2, Eye, ImageOff, RotateCcw } from 'lucide-react'
+import { CheckCircle2, Eye, ImageOff, RotateCcw, Undo2, BadgeCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS } from '@/lib/types/order'
 import type { OrderDb, OrderStatus } from '@/lib/types/order'
@@ -12,14 +12,33 @@ interface OrdersRowProps {
   index: number
   onView: (order: OrderDb) => void
   onUpdateStatus: (id: string, status: OrderStatus) => Promise<unknown>
+  onRequestAction: (id: string, type: 'devolucion' | 'confirmacion') => Promise<unknown>
+  isAdmin: boolean
+  selected: boolean
+  onToggleSelect: () => void
 }
 
-export function OrdersRow({ order, index, onView, onUpdateStatus }: OrdersRowProps) {
-  const [pending, setPending] = useState<OrderStatus | null>(null)
+export function OrdersRow({
+  order,
+  index,
+  onView,
+  onUpdateStatus,
+  onRequestAction,
+  isAdmin,
+  selected,
+  onToggleSelect,
+}: OrdersRowProps) {
+  const [pending, setPending] = useState<OrderStatus | 'devolucion' | 'confirmacion' | null>(null)
 
   async function handleStatus(status: OrderStatus) {
     setPending(status)
     await onUpdateStatus(order.id, status)
+    setPending(null)
+  }
+
+  async function handleRequest(type: 'devolucion' | 'confirmacion') {
+    setPending(type)
+    await onRequestAction(order.id, type)
     setPending(null)
   }
 
@@ -49,6 +68,17 @@ export function OrdersRow({ order, index, onView, onUpdateStatus }: OrdersRowPro
       )}
       style={{ animationDelay: `${Math.min(index, 24) * 30}ms` }}
     >
+      {isAdmin && (
+        <td className="px-4 py-3 sm:px-6">
+          <input
+            type="checkbox"
+            aria-label={`Seleccionar venta de ${order.customerName}`}
+            checked={selected}
+            onChange={onToggleSelect}
+            className="h-3.5 w-3.5 rounded border-input accent-primary"
+          />
+        </td>
+      )}
       <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted-foreground sm:px-6">
         {formatDate(order.createdAt)}
       </td>
@@ -118,6 +148,11 @@ export function OrdersRow({ order, index, onView, onUpdateStatus }: OrdersRowPro
         >
           {ORDER_STATUS_LABELS[order.status]}
         </span>
+        {order.pendingRequest && (
+          <span className="mt-1 block text-[0.6rem] font-medium text-warning">
+            {order.pendingRequest === 'devolucion' ? 'Devolución solicitada' : 'Confirmación solicitada'}
+          </span>
+        )}
       </td>
       <td className="whitespace-nowrap px-4 py-3 sm:px-6">
         <div className="flex items-center justify-end gap-1.5">
@@ -129,24 +164,50 @@ export function OrdersRow({ order, index, onView, onUpdateStatus }: OrdersRowPro
           >
             <Eye className="h-3.5 w-3.5" />
           </button>
-          <button
-            type="button"
-            onClick={() => handleStatus('confirmado')}
-            disabled={order.status === 'confirmado' || pending !== null}
-            title="Confirmar venta"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-success/15 hover:text-success disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <CheckCircle2 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleStatus('devuelto')}
-            disabled={order.status === 'devuelto' || pending !== null}
-            title="Marcar devolución"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/15 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-          </button>
+
+          {isAdmin ? (
+            <>
+              <button
+                type="button"
+                onClick={() => handleStatus('confirmado')}
+                disabled={order.status === 'confirmado' || pending !== null}
+                title="Confirmar venta"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-success/15 hover:text-success disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleStatus('devuelto')}
+                disabled={order.status === 'devuelto' || pending !== null}
+                title="Marcar devolución"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/15 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => handleRequest('confirmacion')}
+                disabled={order.status === 'confirmado' || order.pendingRequest !== null || pending !== null}
+                title="Solicitar confirmación al admin"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-success/15 hover:text-success disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <BadgeCheck className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRequest('devolucion')}
+                disabled={order.status === 'devuelto' || order.pendingRequest !== null || pending !== null}
+                title="Solicitar devolución al admin"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/15 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
         </div>
       </td>
     </tr>

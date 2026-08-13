@@ -13,11 +13,9 @@
 -- abre una nueva cada vez que la anterior se resuelve) y las notas deben
 -- verse en todas, no perderse cuando eso pasa.
 --
--- Sin borrado ni edición a propósito: el pedido fue "que nunca se
--- reinicien" — la única forma de garantizar eso de verdad es no darle a la
--- UI ningún camino para borrar o pisar una nota ya escrita (ver
--- lib/api/chat-notes-store.ts). Es un log de bitácora, no un documento
--- editable.
+-- Editar/borrar: cada quien solo puede tocar sus propias notas (ver la
+-- migración de `updated_at` más abajo y lib/api/chat-notes-store.ts) — las
+-- notas de otros siguen siendo de solo lectura para todos los demás.
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -31,3 +29,12 @@ CREATE TABLE chat_notes (
 );
 
 CREATE INDEX idx_chat_notes_contact ON chat_notes (contact_id, created_at);
+
+-- ============================================================================
+-- MIGRACIÓN — editar/borrar notas (antes imposible a propósito). El negocio
+-- pidió habilitarlo, restringido a que cada quien solo pueda tocar sus
+-- propias notas — ver lib/api/chat-notes-store.ts (updateNote/deleteNote
+-- filtran por author_email, no solo por id).
+-- ============================================================================
+
+ALTER TABLE chat_notes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;

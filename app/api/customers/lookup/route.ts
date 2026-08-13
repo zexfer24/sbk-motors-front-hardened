@@ -25,6 +25,7 @@ export async function GET(request: Request) {
       .from("orders")
       .select("customer_name, customer_cedula, state, city, address")
       .eq("customer_phone", phone)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()

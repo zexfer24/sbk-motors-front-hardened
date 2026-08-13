@@ -3,7 +3,13 @@
 import { useEffect, useId, useState } from 'react'
 import { Check, Handshake, ImageOff, Loader2, Minus, Plus, Search, Trash2, User, X } from 'lucide-react'
 import type { ChatwootConversation, ChatwootMessage } from '@/lib/types/chatwoot'
-import { PAYMENT_METHOD_LABELS, type NewOrderDb, type OrderItem, type PaymentMethod } from '@/lib/types/order'
+import {
+  PAYMENT_METHOD_LABELS,
+  SELECTABLE_PAYMENT_METHODS,
+  type NewOrderDb,
+  type OrderItem,
+  type PaymentMethod,
+} from '@/lib/types/order'
 import { VENEZUELA_STATES } from '@/lib/venezuela-states'
 import { fetchInventory } from '@/lib/api/inventory'
 import { fetchCustomerByPhone, type CustomerLookup } from '@/lib/api/orders'
@@ -13,7 +19,12 @@ import { bsToUsd, formatBs, formatUsd } from '@/lib/currency'
 import { computeCasheaTotalUsd, sumItemsBs } from '@/lib/order-totals'
 import { useExchangeRate } from '@/lib/hooks/use-exchange-rate'
 
-const PAYMENT_METHODS = Object.entries(PAYMENT_METHOD_LABELS) as [PaymentMethod, string][]
+// "Efectivo" y "Otro" se retiraron del selector — ver SELECTABLE_PAYMENT_METHODS
+// en lib/types/order.ts (las ventas viejas con esos métodos se siguen
+// mostrando bien en Ventas, solo dejaron de ser elegibles para ventas nuevas).
+const PAYMENT_METHODS = SELECTABLE_PAYMENT_METHODS.map(
+  (m) => [m, PAYMENT_METHOD_LABELS[m]] as [PaymentMethod, string],
+)
 
 // El borrador se guarda por conversación (no globalmente) — así cada chat
 // mantiene lo que se escribió ahí, y cerrar el modal sin enviar ya no borra
@@ -30,8 +41,8 @@ interface CloseSaleDraft {
   city: string
   address: string
   paymentMethod: PaymentMethod
-  paymentMethodOther: string
   shippingInfo: string
+  trackingNumber: string
   casheaOrderNumber: string
   casheaInitialUsd: string
   captureUrl: string | null
@@ -97,8 +108,8 @@ export function CloseSaleModal({
   const [city, setCity] = useState(draftLoaded?.city ?? '')
   const [address, setAddress] = useState(draftLoaded?.address ?? '')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(draftLoaded?.paymentMethod ?? 'pago_movil')
-  const [paymentMethodOther, setPaymentMethodOther] = useState(draftLoaded?.paymentMethodOther ?? '')
   const [shippingInfo, setShippingInfo] = useState(draftLoaded?.shippingInfo ?? '')
+  const [trackingNumber, setTrackingNumber] = useState(draftLoaded?.trackingNumber ?? '')
   const [casheaOrderNumber, setCasheaOrderNumber] = useState(draftLoaded?.casheaOrderNumber ?? '')
   const [casheaInitialUsd, setCasheaInitialUsd] = useState(draftLoaded?.casheaInitialUsd ?? '')
   const [captureUrl, setCaptureUrl] = useState<string | null>(draftLoaded?.captureUrl ?? null)
@@ -121,8 +132,8 @@ export function CloseSaleModal({
       city,
       address,
       paymentMethod,
-      paymentMethodOther,
       shippingInfo,
+      trackingNumber,
       casheaOrderNumber,
       casheaInitialUsd,
       captureUrl,
@@ -137,8 +148,8 @@ export function CloseSaleModal({
     city,
     address,
     paymentMethod,
-    paymentMethodOther,
     shippingInfo,
+    trackingNumber,
     casheaOrderNumber,
     casheaInitialUsd,
     captureUrl,
@@ -248,8 +259,8 @@ export function CloseSaleModal({
     setCity('')
     setAddress('')
     setPaymentMethod('pago_movil')
-    setPaymentMethodOther('')
     setShippingInfo('')
+    setTrackingNumber('')
     setCasheaOrderNumber('')
     setCasheaInitialUsd('')
     setCaptureUrl(null)
@@ -298,10 +309,6 @@ export function CloseSaleModal({
       setFormError('Completa la dirección.')
       return
     }
-    if (paymentMethod === 'otro' && !paymentMethodOther.trim()) {
-      setFormError('Especifica el método de pago.')
-      return
-    }
     if (paymentMethod === 'cashea') {
       if (!casheaOrderNumber.trim()) {
         setFormError('Ingresa el número de orden de Cashea.')
@@ -332,8 +339,9 @@ export function CloseSaleModal({
       city: city.trim(),
       address: address.trim(),
       paymentMethod,
-      paymentMethodOther: paymentMethod === 'otro' ? paymentMethodOther.trim() : null,
+      paymentMethodOther: null,
       shippingInfo: shippingInfo.trim(),
+      trackingNumber: trackingNumber.trim() || null,
       casheaOrderNumber: paymentMethod === 'cashea' ? casheaOrderNumber.trim() : null,
       casheaTotalUsd: paymentMethod === 'cashea' ? casheaTotalNum : null,
       casheaInitialUsd: paymentMethod === 'cashea' ? casheaInitialNum : null,
@@ -536,6 +544,19 @@ export function CloseSaleModal({
           </div>
 
           <div className="flex flex-col gap-1.5">
+            <label htmlFor={`${formId}-tracking`} className="text-xs font-semibold text-muted-foreground">
+              Número de guía (opcional)
+            </label>
+            <input
+              id={`${formId}-tracking`}
+              value={trackingNumber}
+              onChange={(e) => setTrackingNumber(e.target.value)}
+              placeholder="Código de rastreo del paquete"
+              className="rounded-lg border border-input bg-background px-3.5 py-2.5 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60 focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
             <span className="text-xs font-semibold text-muted-foreground">
               Artículos del pedido
             </span>
@@ -656,20 +677,6 @@ export function CloseSaleModal({
               ))}
             </select>
           </div>
-
-          {paymentMethod === 'otro' && (
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor={`${formId}-payment-other`} className="text-xs font-semibold text-muted-foreground">
-                Especifica el método de pago
-              </label>
-              <input
-                id={`${formId}-payment-other`}
-                value={paymentMethodOther}
-                onChange={(e) => setPaymentMethodOther(e.target.value)}
-                className="rounded-lg border border-input bg-background px-3.5 py-2.5 text-sm text-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/30"
-              />
-            </div>
-          )}
 
           {paymentMethod === 'cashea' && (
             <div className="flex flex-col gap-3 rounded-lg border border-border bg-background/50 p-3">
