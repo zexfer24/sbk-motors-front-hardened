@@ -41,6 +41,8 @@ interface AgentWithStats {
   email: string
   chatwootAgentId: number
   stats: AgentStatsDto | null
+  /** null = la tabla `asesores` no tiene fila para este asesor todavía (ver db/asesores_schema_reference.md). */
+  activo: boolean | null
 }
 
 async function fetchAgentStats(): Promise<AgentWithStats[]> {
@@ -48,6 +50,15 @@ async function fetchAgentStats(): Promise<AgentWithStats[]> {
   if (!res.ok) throw new Error('No se pudieron cargar las métricas de asesores.')
   const data = await res.json()
   return data.agents as AgentWithStats[]
+}
+
+async function setAgentActive(chatwootAgentId: number, activo: boolean): Promise<void> {
+  const res = await fetch('/api/dashboard/agents/active', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chatwootAgentId, activo }),
+  })
+  if (!res.ok) throw new Error('No se pudo cambiar el estado del asesor.')
 }
 
 // Admin-only (ver app/page.tsx y proxy.ts, /api/dashboard/* completo lo es).
@@ -103,6 +114,24 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
     }
   }, [active])
 
+  // Optimista porque es un toggle simple de un booleano — se revierte si la
+  // escritura falla. Afecta la auto-asignación real de n8n, así que además
+  // de la UI hay que confiar en que /api/dashboard/agents/active de verdad
+  // aplicó el cambio antes de darlo por hecho.
+  async function handleToggleActive(chatwootAgentId: number, next: boolean) {
+    setAgentStats((prev) =>
+      (prev ?? []).map((a) => (a.chatwootAgentId === chatwootAgentId ? { ...a, activo: next } : a)),
+    )
+    try {
+      await setAgentActive(chatwootAgentId, next)
+    } catch {
+      setAgentStats((prev) =>
+        (prev ?? []).map((a) => (a.chatwootAgentId === chatwootAgentId ? { ...a, activo: !next } : a)),
+      )
+      setAgentStatsError('No se pudo cambiar el estado del asesor. Intenta de nuevo.')
+    }
+  }
+
   async function handleReassign(conversationId: string, agentId: number | null) {
     setReassignError(null)
     setReassigningId(conversationId)
@@ -138,6 +167,12 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
   const statsByAgentId = useMemo(() => {
     const map = new Map<number, AgentStatsDto | null>()
     for (const a of agentStats ?? []) map.set(a.chatwootAgentId, a.stats)
+    return map
+  }, [agentStats])
+
+  const activeByAgentId = useMemo(() => {
+    const map = new Map<number, boolean | null>()
+    for (const a of agentStats ?? []) map.set(a.chatwootAgentId, a.activo)
     return map
   }, [agentStats])
 
@@ -182,6 +217,8 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
                       unreadCount={(byAgent.get(a.chatwootAgentId!) ?? []).filter((c) => c.unreadCount > 0).length}
                       stats={statsByAgentId.get(a.chatwootAgentId!) ?? null}
                       loading={agentStatsLoading}
+                      activo={activeByAgentId.get(a.chatwootAgentId!) ?? null}
+                      onToggleActive={(next) => handleToggleActive(a.chatwootAgentId!, next)}
                     />
                   ))}
                 </div>
@@ -267,12 +304,16 @@ function AdvisorCard({
   unreadCount,
   stats,
   loading,
+  activo,
+  onToggleActive,
 }: {
   agent: Agent
   assignedCount: number
   unreadCount: number
   stats: AgentStatsDto | null
   loading: boolean
+  activo: boolean | null
+  onToggleActive: (next: boolean) => void
 }) {
   const color = avatarColor(agent.email)
 
@@ -297,6 +338,37 @@ function AdvisorCard({
           </span>
         )}
       </div>
+
+      {/* Activo/Inactivo controla la auto-asignación real de chats nuevos
+          en n8n (ver db/asesores_schema_reference.md) — null significa que
+          la tabla `asesores` no tiene fila para este asesor, no se puede
+          togglear desde acá hasta que infra la cree. */}
+      <button
+        type="button"
+        disabled={activo === null}
+        onClick={() => onToggleActive(!activo)}
+        className={cn(
+          'flex items-center justify-between gap-2 border-b border-border/60 px-4 py-2 text-xs transition-colors disabled:cursor-default disabled:opacity-60',
+          activo ? 'bg-success/10 text-success hover:bg-success/15' : 'bg-warning/10 text-warning hover:bg-warning/15',
+        )}
+      >
+        <span className="font-medium">
+          {activo === null ? 'Estado no disponible' : activo ? 'Activo' : 'Inactivo'}
+        </span>
+        <span
+          className={cn(
+            'relative h-5 w-9 shrink-0 rounded-full transition-colors',
+            activo ? 'bg-success' : 'bg-muted-foreground/40',
+          )}
+        >
+          <span
+            className={cn(
+              'absolute top-0.5 h-4 w-4 rounded-full bg-card transition-transform',
+              activo ? 'translate-x-4' : 'translate-x-0.5',
+            )}
+          />
+        </span>
+      </button>
 
       {loading ? (
         <div className="flex items-center justify-center gap-2 px-4 py-6 text-xs text-muted-foreground">
