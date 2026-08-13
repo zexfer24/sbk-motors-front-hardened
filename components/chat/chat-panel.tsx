@@ -14,6 +14,8 @@ import {
   Reply,
   Settings2,
   SendHorizonal,
+  Smile,
+  StickyNote,
   Tag,
   UserCog,
   X,
@@ -25,10 +27,12 @@ import { CloseSaleModal } from '@/components/chat/close-sale-modal'
 import { ImagePreviewModal } from '@/components/chat/image-preview-modal'
 import { QuickRepliesManagerModal } from '@/components/chat/quick-replies-manager-modal'
 import { LabelsManagerModal } from '@/components/chat/labels-manager-modal'
+import { EmojiPicker } from '@/components/chat/emoji-picker'
 import { avatarColor } from '@/lib/avatar-color'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { useQuickReplies } from '@/lib/hooks/use-quick-replies'
 import { fetchAgents, type Agent, type ChatwootLabel } from '@/lib/api/chatwoot'
+import { addNote, fetchNotes, type ChatNoteDto } from '@/lib/api/chat-notes'
 import { cn } from '@/lib/utils'
 
 // Alto máximo del compositor antes de que aparezca su propio scroll interno
@@ -131,6 +135,13 @@ export function ChatPanel({
   const [labelsError, setLabelsError] = useState<string | null>(null)
   const [labelsManagerOpen, setLabelsManagerOpen] = useState(false)
   const [replyTarget, setReplyTarget] = useState<ChatwootMessage | null>(null)
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [notes, setNotes] = useState<ChatNoteDto[] | null>(null)
+  const [notesLoading, setNotesLoading] = useState(false)
+  const [notesError, setNotesError] = useState<string | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [noteSaving, setNoteSaving] = useState(false)
+  const [emojiOpen, setEmojiOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -166,6 +177,17 @@ export function ChatPanel({
   useEffect(() => {
     setReplyTarget(null)
   }, [conversation.id])
+
+  // Las notas son por CONTACTO, no por conversación — pero al cambiar de
+  // chat hay que recargarlas igual (puede ser otro contacto) y cerrar el
+  // panel si estaba abierto, para no dejarlo abierto mostrando las notas
+  // del cliente anterior encima del nuevo.
+  useEffect(() => {
+    setNotesOpen(false)
+    setNotes(null)
+    setNotesError(null)
+    setNoteDraft('')
+  }, [conversation.contactId])
 
   // Solo baja el scroll cuando cambia el ÚLTIMO mensaje (uno nuevo llegó o
   // se mandó) — si lo que cambió fue anteponer mensajes viejos al abrir
@@ -203,10 +225,22 @@ export function ChatPanel({
   // Al acercarse al tope del historial, pide la tanda anterior y preserva
   // la posición visual: sin esto, anteponer mensajes arriba empuja todo
   // hacia abajo y el usuario pierde de vista lo que estaba leyendo.
+  //
+  // Umbral subido de 80px a 400px (2026-08-13): el cliente reportó que el
+  // historial "se cortaba" — la causa real era que había que scrollear
+  // hasta pegar arriba del todo para que se disparara la carga, algo que la
+  // mayoría no hacía. Con 400px alcanza con acercarse. El botón explícito de
+  // abajo cubre el resto: no depende de la posición del scroll en absoluto.
   function handleScroll() {
     const el = scrollRef.current
-    if (!el || el.scrollTop > 80 || loadingOlderMessages || !hasMoreMessages) return
+    if (!el || el.scrollTop > 400 || loadingOlderMessages || !hasMoreMessages) return
     pendingRestoreRef.current = { prevScrollHeight: el.scrollHeight, prevScrollTop: el.scrollTop }
+    onLoadOlderMessages()
+  }
+
+  function handleLoadOlderClick() {
+    const el = scrollRef.current
+    if (el) pendingRestoreRef.current = { prevScrollHeight: el.scrollHeight, prevScrollTop: el.scrollTop }
     onLoadOlderMessages()
   }
 
@@ -398,6 +432,39 @@ export function ChatPanel({
       if ('error' in result) setLabelsError(result.error)
     } finally {
       setLabelsSaving(false)
+    }
+  }
+
+  async function handleOpenNotes() {
+    setNotesOpen((v) => !v)
+    if (!notes && conversation.contactId != null) {
+      setNotesLoading(true)
+      setNotesError(null)
+      try {
+        setNotes(await fetchNotes(conversation.contactId))
+      } catch {
+        setNotesError('No se pudieron cargar las notas.')
+      } finally {
+        setNotesLoading(false)
+      }
+    }
+  }
+
+  async function handleAddNote() {
+    const content = noteDraft.trim()
+    if (!content || conversation.contactId == null || noteSaving) return
+    setNoteSaving(true)
+    setNotesError(null)
+    try {
+      const result = await addNote(conversation.contactId, content)
+      if ('error' in result) {
+        setNotesError('No se pudo guardar la nota.')
+        return
+      }
+      setNotes((prev) => [...(prev ?? []), result])
+      setNoteDraft('')
+    } finally {
+      setNoteSaving(false)
     }
   }
 
@@ -612,6 +679,85 @@ export function ChatPanel({
             )}
         </div>
 
+        {/* Notas privadas por cliente — cualquiera del equipo puede leerlas y
+            escribirlas (no admin-only), ver app/api/chat-notes/route.ts.
+            Deshabilitado si esta conversación no trae contactId resuelto
+            (modo demo, o dato sin mapear todavía). */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={handleOpenNotes}
+            disabled={conversation.contactId == null}
+            title={conversation.contactId == null ? 'No disponible para este chat' : undefined}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold transition-all active:scale-95 disabled:opacity-40',
+              notesOpen ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <StickyNote className="h-4 w-4" />
+            <span className="hidden sm:inline">Notas</span>
+            {notes && notes.length > 0 && (
+              <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[0.65rem] text-foreground">
+                {notes.length}
+              </span>
+            )}
+          </button>
+
+          {notesOpen && (
+            <>
+              <button
+                type="button"
+                aria-label="Cerrar notas"
+                className="fixed inset-0 z-40"
+                onClick={() => setNotesOpen(false)}
+              />
+              <div className="absolute right-0 top-full z-50 mt-2 flex max-h-96 w-72 flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50 sm:w-80">
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                  {notesError && <p className="pb-2 text-xs text-primary">{notesError}</p>}
+                  {notesLoading ? (
+                    <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Cargando…
+                    </div>
+                  ) : notes && notes.length > 0 ? (
+                    <div className="flex flex-col gap-2">
+                      {notes.map((n) => (
+                        <div key={n.id} className="rounded-md bg-secondary/60 px-2.5 py-2 text-xs">
+                          <p className="whitespace-pre-wrap text-foreground">{n.content}</p>
+                          <p className="mt-1 text-[0.65rem] text-muted-foreground">
+                            {n.authorEmail} · {new Date(n.createdAt).toLocaleString('es-VE')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="py-2 text-xs text-muted-foreground">
+                      Todavía no hay notas sobre este cliente.
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-end gap-2 border-t border-border p-2">
+                  <textarea
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    placeholder="Escribe una nota interna…"
+                    rows={2}
+                    className="min-h-11 flex-1 resize-none rounded-md border border-input bg-background px-2.5 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/30"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddNote}
+                    disabled={!noteDraft.trim() || noteSaving}
+                    className="inline-flex h-11 shrink-0 items-center justify-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+                  >
+                    {noteSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Agregar'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
         {conversation.canWrite && (
           <button
             type="button"
@@ -735,10 +881,23 @@ export function ChatPanel({
         onScroll={handleScroll}
         className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-5 sm:px-6"
       >
-        {loadingOlderMessages && (
+        {loadingOlderMessages ? (
           <div className="flex justify-center py-2">
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           </div>
+        ) : (
+          hasMoreMessages &&
+          messages.length > 0 && (
+            <div className="flex justify-center py-1">
+              <button
+                type="button"
+                onClick={handleLoadOlderClick}
+                className="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Cargar mensajes anteriores
+              </button>
+            </div>
+          )
         )}
 
         {messages.length === 0 ? (
@@ -847,6 +1006,39 @@ export function ChatPanel({
                   <Paperclip className="h-5 w-5" />
                 )}
               </button>
+
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEmojiOpen((v) => !v)}
+                  className={cn(
+                    'flex h-11 w-11 items-center justify-center rounded-lg transition-colors',
+                    emojiOpen ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                  aria-label="Emojis"
+                >
+                  <Smile className="h-5 w-5" />
+                </button>
+
+                {emojiOpen && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Cerrar emojis"
+                      className="fixed inset-0 z-40"
+                      onClick={() => setEmojiOpen(false)}
+                    />
+                    <div className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50">
+                      <EmojiPicker
+                        onSelect={(emoji) => {
+                          insertAtCursor(emoji)
+                          textareaRef.current?.focus()
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
 
               <div className="relative shrink-0">
                 <button

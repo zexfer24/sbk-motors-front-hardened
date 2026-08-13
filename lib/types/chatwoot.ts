@@ -27,6 +27,8 @@ export interface ChatwootMessage {
 
 export interface ChatwootConversation {
   id: string
+  /** id de contacto de Chatwoot (no de conversación) — mismo cliente puede tener varias conversaciones. Usado para notas privadas por cliente (ver lib/api/chat-notes.ts). Ausente en modo demo. */
+  contactId?: number | null
   contactName: string
   phone: string
   avatarUrl?: string | null

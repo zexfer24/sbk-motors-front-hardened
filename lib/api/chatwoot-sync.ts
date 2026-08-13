@@ -27,6 +27,7 @@ export function mapChatwootConversation(
 
   return {
     id: String(raw.id ?? ""),
+    contactId: sender.id != null ? Number(sender.id) : null,
     contactName: String(sender.name ?? "Desconocido"),
     phone: String(sender.phone_number ?? ""),
     avatarUrl: sender.thumbnail ? String(sender.thumbnail) : null,

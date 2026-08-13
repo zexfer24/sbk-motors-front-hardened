@@ -151,6 +151,7 @@ interface ConversationRow {
   labels_raw: string | null
   inbox_id: number | null
   inbox_name: string | null
+  contact_id: number | null
   contact_name: string | null
   phone: string | null
   assignee_id: number | null
@@ -192,6 +193,7 @@ const CONVERSATIONS_QUERY = `
     c.cached_label_list AS labels_raw,
     c.inbox_id AS inbox_id,
     ib.name AS inbox_name,
+    ct.id AS contact_id,
     ct.name AS contact_name,
     ct.phone_number AS phone,
     c.assignee_id AS assignee_id,
@@ -233,6 +235,7 @@ function mapRow(row: ConversationRow): MappedConversation {
 
   return {
     id: String(row.id),
+    contactId: row.contact_id,
     contactName: row.contact_name ?? "Desconocido",
     phone: row.phone ?? "",
     // No se puede replicar por SQL: en Chatwoot es un método derivado
