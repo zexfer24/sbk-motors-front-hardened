@@ -48,16 +48,19 @@ const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
 // visita, no solo en la sesión actual.
 type SortOrder = 'asc' | 'desc'
 const SORT_ORDER_KEY = 'sbk:chat-sort-order'
-// Etiquetas explícitas sobre "llegada" — el criterio de este orden es
-// SIEMPRE createdAt (cuándo se abrió la conversación, a propósito, ver el
-// comentario grande de más abajo), nunca lastMessageAt (que es lo que
-// muestra la hora de cada fila). Decirlo así en la propia etiqueta evita
-// que un asesor lea "Más nuevos primero" como "el que más recientemente
-// escribió arriba" — eso es la hora que VE en la fila, no el criterio de
-// orden.
+// BUG (encontrado 2026-08-13, confirmado en producción con las 405
+// conversaciones reales): el orden usaba createdAt (cuándo se abrió la
+// conversación por primera vez) pero cada fila MUESTRA formatTime(lastMessageAt)
+// (más abajo) — un campo distinto. Un cliente que escribió por primera vez
+// hace semanas y volvió a escribir hace 4h se ordenaba por esas semanas, no
+// por esas 4h: la lista saltaba sin patrón aparente para quien la mira
+// ("5h, 5h, 6h, 5h, 4h..."), aunque el sort en sí funcionaba perfecto —
+// por el campo equivocado. Ahora el criterio es lastMessageAt, el mismo
+// campo que ya se ve en cada fila — por eso las etiquetas ya no necesitan
+// aclarar "llegada" vs. "la hora que ves": ahora son lo mismo.
 const SORT_OPTIONS: { key: SortOrder; label: string; icon: typeof ArrowUpNarrowWide }[] = [
-  { key: 'asc', label: 'Los que llegaron primero, arriba', icon: ArrowUpNarrowWide },
-  { key: 'desc', label: 'Los que llegaron último, arriba', icon: ArrowDownNarrowWide },
+  { key: 'asc', label: 'Más antiguos arriba', icon: ArrowUpNarrowWide },
+  { key: 'desc', label: 'Más recientes arriba', icon: ArrowDownNarrowWide },
 ]
 
 // Reglas del negocio (2026-08-12, corregida 2026-08-13, personalizada por
@@ -192,13 +195,19 @@ export function ConversationList({
     return true
   })
 
-  // Por orden de llegada (createdAt) — mismo criterio que sweepConversations
-  // en lib/api/chatwoot-sync.ts, que ya entrega la lista en ascendente. Se
-  // reordena igual acá (en vez de confiar en que ya venga así) para no
-  // depender del orden exacto que traiga el servidor, y para poder invertirla
-  // sin tocar nada del lado del backend.
+  // Por última actividad (lastMessageAt) — el mismo campo que ya se muestra
+  // como la hora de cada fila (formatTime(c.lastMessageAt) más abajo), y el
+  // comportamiento estándar de cualquier chat (WhatsApp incluido): el que
+  // más recientemente escribió sube/baja según el toggle. Antes usaba
+  // createdAt (cuándo se abrió la conversación, no cuándo fue el último
+  // mensaje) — ver el comentario de SORT_OPTIONS más arriba para el bug que
+  // eso causaba. lastMessageAt puede ser null (conversación sin mensajes
+  // todavía) — cae a createdAt en ese caso, mismo fallback que usa
+  // isBetterConversation en lib/api/chatwoot-sync.ts.
   const sorted = [...filtered].sort((a, b) => {
-    const diff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    const aTime = a.lastMessageAt ?? a.createdAt
+    const bTime = b.lastMessageAt ?? b.createdAt
+    const diff = new Date(aTime).getTime() - new Date(bTime).getTime()
     return sortOrder === 'asc' ? diff : -diff
   })
 
@@ -327,10 +336,7 @@ export function ConversationList({
 
                   <div className="border-b border-border px-3 py-2">
                     <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Orden de llegada
-                    </p>
-                    <p className="mb-1.5 px-2 text-[0.65rem] text-muted-foreground">
-                      La hora en cada chat es de su último mensaje — este orden es de cuándo llegó, no de esa hora.
+                      Orden
                     </p>
                     {SORT_OPTIONS.map((opt) => (
                       <button
