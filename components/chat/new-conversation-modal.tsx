@@ -109,7 +109,10 @@ export function NewConversationModal({ open, onClose, onStart }: NewConversation
     if (!selectedTemplate) return ''
     let text = bodyText(selectedTemplate)
     params.forEach((v, i) => {
-      text = text.replace(`{{${i + 1}}}`, v.trim() || `{{${i + 1}}}`)
+      // replaceAll (no replace): si la plantilla repite la misma variable
+      // más de una vez en el cuerpo, replace() solo sustituía la primera
+      // aparición y dejaba `{{n}}` literal en la segunda.
+      text = text.replaceAll(`{{${i + 1}}}`, v.trim() || `{{${i + 1}}}`)
     })
     return text
   }

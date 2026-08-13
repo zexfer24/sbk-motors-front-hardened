@@ -302,17 +302,22 @@ export function useChatwoot(active: boolean = true) {
   }, [])
 
   const send = useCallback(
-    async (input: NewMessageInput) => {
-      if (!activeId) return
-      const msg = await sendMessage(activeId, input)
-      setMessages((prev) => [...prev, msg])
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === activeId
-            ? { ...c, lastMessage: input.content, handledBy: "human" }
-            : c,
-        ),
-      )
+    async (input: NewMessageInput): Promise<{ error: string } | { ok: true }> => {
+      if (!activeId) return { error: "No hay conversación seleccionada." }
+      try {
+        const msg = await sendMessage(activeId, input)
+        setMessages((prev) => [...prev, msg])
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === activeId
+              ? { ...c, lastMessage: input.content, handledBy: "human" }
+              : c,
+          ),
+        )
+        return { ok: true }
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "No se pudo enviar el mensaje." }
+      }
     },
     [activeId],
   )
@@ -495,8 +500,8 @@ export function useChatwoot(active: boolean = true) {
 
       try {
         await closeConversation(input.conversationId)
-      } catch {
-        return { error: "error_chatwoot" }
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "error_chatwoot" }
       }
 
       setConversations((prev) =>

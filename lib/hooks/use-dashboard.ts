@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { DataSource } from "@/lib/api/shared"
 import { caracasToday } from "@/lib/caracas-time"
 
@@ -42,8 +42,14 @@ export function useDashboard(date: string = caracasToday(), active: boolean = tr
   const [source, setSource] = useState<DataSource>("demo")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // El polling silencioso de 45s y un reload() manual (o un cambio de
+  // `date`) pueden solaparse; si la respuesta más vieja llega después,
+  // pisaría a la más nueva ya pintada. Mismo patrón que
+  // conversationsRequestId en use-chatwoot.ts.
+  const requestIdRef = useRef(0)
 
   const load = useCallback(async (options?: { silent?: boolean }) => {
+    const requestId = ++requestIdRef.current
     if (!options?.silent) setLoading(true)
     setError(null)
     try {
@@ -55,6 +61,7 @@ export function useDashboard(date: string = caracasToday(), active: boolean = tr
 
       const kpisData = await kpisRes.json()
       const hourlyData = await hourlyRes.json()
+      if (requestId !== requestIdRef.current) return
 
       setKpis(kpisData.kpis as DashboardKpi[])
       setHourly({
@@ -66,9 +73,10 @@ export function useDashboard(date: string = caracasToday(), active: boolean = tr
       })
       setSource(kpisData.source as DataSource)
     } catch {
+      if (requestId !== requestIdRef.current) return
       if (!options?.silent) setError("No se pudo cargar el panel. Intenta de nuevo en un momento.")
     } finally {
-      if (!options?.silent) setLoading(false)
+      if (requestId === requestIdRef.current && !options?.silent) setLoading(false)
     }
   }, [date])
 

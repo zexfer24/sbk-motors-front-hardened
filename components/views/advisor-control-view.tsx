@@ -64,6 +64,21 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
   const unassigned = open.filter((c) => c.assigneeId == null)
   const linkedAgents = useMemo(() => (agents ?? []).filter((a) => a.chatwootAgentId !== null), [agents])
 
+  // Si el agente de la cola seleccionada desaparece de `linkedAgents` (se
+  // desvinculó de Chatwoot, o `agents` se refrescó), `activeAgent` de abajo
+  // pasa a `null` y el encabezado mostraría "Libres" mientras la lista de
+  // conversaciones seguía siendo la de ese agente puntual (`byAgent` no
+  // depende de `linkedAgents`). Volver a una cola que sí existe evita esa
+  // discrepancia entre el título y el contenido.
+  useEffect(() => {
+    if (
+      typeof selectedQueue === 'number' &&
+      !linkedAgents.some((a) => a.chatwootAgentId === selectedQueue)
+    ) {
+      setSelectedQueue('unassigned')
+    }
+  }, [selectedQueue, linkedAgents])
+
   const byAgent = useMemo(() => {
     const map = new Map<number, ChatwootConversation[]>()
     for (const c of open) {

@@ -26,7 +26,9 @@ function getStore(): OrderDb[] {
 }
 
 export function listOrders(): OrderDb[] {
-  return [...getStore()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+  return [...getStore()].sort((a, b) =>
+    a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? 1 : -1,
+  )
 }
 
 export function createOrder(input: CreateOrderInput): OrderDb {

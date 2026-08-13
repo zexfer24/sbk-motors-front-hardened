@@ -18,18 +18,25 @@ export function useContacts(active: boolean = true) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const wasActive = useRef(active)
+  // El polling silencioso de 45s y un reload() manual pueden solaparse; si
+  // la respuesta más vieja llega después, pisaría a la más nueva ya
+  // pintada. Mismo patrón que conversationsRequestId en use-chatwoot.ts.
+  const requestIdRef = useRef(0)
 
   const load = useCallback(async (options?: { silent?: boolean }) => {
+    const requestId = ++requestIdRef.current
     if (!options?.silent) setLoading(true)
     setError(null)
     try {
       const data = await fetchContacts()
+      if (requestId !== requestIdRef.current) return
       setContacts(data.contacts)
       setSource(data.source)
     } catch {
+      if (requestId !== requestIdRef.current) return
       if (!options?.silent) setError("No se pudieron cargar los contactos. Intenta de nuevo en un momento.")
     } finally {
-      if (!options?.silent) setLoading(false)
+      if (requestId === requestIdRef.current && !options?.silent) setLoading(false)
     }
   }, [])
 

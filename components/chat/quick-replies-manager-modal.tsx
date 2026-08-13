@@ -104,7 +104,10 @@ export function QuickRepliesManagerModal({
       <button
         type="button"
         aria-label="Cerrar"
-        onClick={onClose}
+        onClick={() => {
+          cancelEdit()
+          onClose()
+        }}
         className="absolute inset-0 bg-background/80 backdrop-blur-sm"
       />
 
@@ -125,7 +128,10 @@ export function QuickRepliesManagerModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              cancelEdit()
+              onClose()
+            }}
             className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             aria-label="Cerrar"
           >

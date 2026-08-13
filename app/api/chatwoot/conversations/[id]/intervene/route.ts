@@ -8,6 +8,7 @@ import {
   authorizeConversationRead,
   callerAgentId as getCallerAgentId,
   callerIsAdmin,
+  fetchAssignee,
   isValidConversationId,
 } from "@/lib/chatwoot/authz"
 
@@ -102,6 +103,27 @@ export async function POST(request: Request, { params }: RouteContext) {
       // (ver invalidateConversationsCache) — visualmente, como si
       // "Intervenir" no hubiera hecho nada.
       invalidateConversationsCache()
+
+      // Ventana de carrera real entre el chequeo de arriba (línea ~68-86) y
+      // este POST: dos asesores pueden pasar el chequeo `takeable` casi
+      // al mismo tiempo sobre el mismo chat libre, y ambos dispararían este
+      // POST — gana el último en llegar a Chatwoot. Sin esta relectura, el
+      // que pierde la carrera se queda creyendo (por su propia respuesta
+      // 200) que intervino, cuando en realidad Chatwoot ya quedó asignado a
+      // otro. Solo aplica al tomar un chat (intervene=true): soltar
+      // (assignee_id=null) es idempotente y no tiene este riesgo.
+      if (intervene) {
+        const confirmed = await fetchAssignee(id)
+        if (confirmed.assigneeId !== assigneeId) {
+          return NextResponse.json(
+            {
+              error: "asignado_por_otro",
+              message: `"${confirmed.assigneeName ?? "Otro asesor"}" se adelantó a tomar esta conversación.`,
+            },
+            { status: 409 },
+          )
+        }
+      }
 
       // "Sistema" cuando quien suelta es quien la tenía (el caso normal de
       // dejar de intervenir); el nombre real de quien la soltó cuando es un

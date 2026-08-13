@@ -54,6 +54,7 @@ function isValidItems(items: unknown): items is OrderItem[] {
       typeof it.sku === "string" &&
       typeof it.name === "string" &&
       typeof it.price === "number" &&
+      it.price >= 0 &&
       typeof it.quantity === "number" &&
       it.quantity > 0
     )

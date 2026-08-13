@@ -22,20 +22,29 @@ export function useInventory(active: boolean = true) {
   const [totalPages, setTotalPages] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const wasActive = useRef(active)
+  // Clics de paginación seguidos (sin texto de búsqueda, delay 0) pueden
+  // disparar dos fetch casi a la vez; si el de una página vieja responde
+  // después que el de la página actual, pisaría los resultados mostrados
+  // sin que el control de paginación se entere. Mismo patrón que
+  // conversationsRequestId en use-chatwoot.ts.
+  const requestIdRef = useRef(0)
 
   const load = useCallback(async (p: number, q: string, options?: { silent?: boolean }) => {
+    const requestId = ++requestIdRef.current
     if (!options?.silent) setLoading(true)
     setError(null)
     try {
       const data = await fetchInventory({ page: p, q })
+      if (requestId !== requestIdRef.current) return
       setItems(data.items)
       setSource(data.source)
       setTotalPages(data.totalPages)
       setTotalCount(data.totalCount)
     } catch {
+      if (requestId !== requestIdRef.current) return
       if (!options?.silent) setError("No se pudo cargar el inventario. Intenta de nuevo en un momento.")
     } finally {
-      if (!options?.silent) setLoading(false)
+      if (requestId === requestIdRef.current && !options?.silent) setLoading(false)
     }
   }, [])
 

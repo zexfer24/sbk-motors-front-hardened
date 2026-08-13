@@ -34,6 +34,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^10.6.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "postcss": "^8.5.18",
     "shadcn": "^4.8.0",
     "tailwindcss": "^4.2.0",

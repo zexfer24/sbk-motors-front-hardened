@@ -75,7 +75,7 @@ interface ChatPanelProps {
   onLoadOlderMessages: () => void
   intervened: boolean
   onBack: () => void
-  onSend: (text: string, inReplyTo?: string) => void
+  onSend: (text: string, inReplyTo?: string) => Promise<{ error: string } | { ok: true }>
   onSendImage: (file: File, caption?: string, inReplyTo?: string) => Promise<void>
   onDeleteMessage: (messageId: string) => Promise<{ error: string } | { ok: true }>
   onToggleIntervene: () => Promise<{ error: string } | { ok: true }>
@@ -111,6 +111,8 @@ export function ChatPanel({
   onCloseSale,
 }: ChatPanelProps) {
   const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const [closeSaleOpen, setCloseSaleOpen] = useState(false)
   const [imageUploading, setImageUploading] = useState(false)
   const [imageError, setImageError] = useState<string | null>(null)
@@ -134,6 +136,12 @@ export function ChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const lastMessageIdRef = useRef<string | null>(null)
   const pendingRestoreRef = useRef<{ prevScrollHeight: number; prevScrollTop: number } | null>(null)
+  // Si el layout effect de abajo restauró la posición en este mismo commit
+  // (cargar historial coincidió con un mensaje nuevo llegando), el efecto de
+  // "bajar al fondo" no debe pisarla — layout effects corren antes que los
+  // efectos normales, así que para cuando este flag se lee ya refleja lo que
+  // pasó en el mismo render.
+  const restoredThisCommitRef = useRef(false)
   const { user } = useAuth()
   const {
     replies: quickReplies,
@@ -166,7 +174,11 @@ export function ChatPanel({
   // handleScroll más abajo).
   useEffect(() => {
     const lastId = messages[messages.length - 1]?.id ?? null
-    if (lastId !== lastMessageIdRef.current) {
+    if (restoredThisCommitRef.current) {
+      // El layout effect de abajo ya fijó el scroll para este mismo cambio
+      // de `messages` — no bajar al fondo encima de esa restauración.
+      restoredThisCommitRef.current = false
+    } else if (lastId !== lastMessageIdRef.current) {
       scrollRef.current?.scrollTo({
         top: scrollRef.current.scrollHeight,
         behavior: 'smooth',
@@ -185,6 +197,7 @@ export function ChatPanel({
     if (!el || !pending) return
     el.scrollTop = el.scrollHeight - pending.prevScrollHeight + pending.prevScrollTop
     pendingRestoreRef.current = null
+    restoredThisCommitRef.current = true
   }, [messages])
 
   // Al acercarse al tope del historial, pide la tanda anterior y preserva
@@ -241,12 +254,26 @@ export function ChatPanel({
     return () => cancelAnimationFrame(frame)
   }, [conversation.id, conversation.canWrite, withinWhatsappWindow])
 
-  function submitDraft() {
+  // No se limpia el compositor de forma optimista: si `onSend` falla (red,
+  // Chatwoot caído), el asesor se quedaba viendo el texto desaparecer sin
+  // ningún aviso y creyendo que el mensaje había salido. Ahora el texto (y
+  // el "respondiendo a...") solo se descartan tras confirmar el envío.
+  async function submitDraft() {
     const text = draft.trim()
-    if (!text) return
-    onSend(text, replyTarget?.id)
-    setDraft('')
-    setReplyTarget(null)
+    if (!text || sending) return
+    setSending(true)
+    setSendError(null)
+    try {
+      const result = await onSend(text, replyTarget?.id)
+      if ('error' in result) {
+        setSendError(result.error)
+        return
+      }
+      setDraft('')
+      setReplyTarget(null)
+    } finally {
+      setSending(false)
+    }
   }
 
   // Estilo WhatsApp real: se puede responder a cualquier mensaje de la
@@ -397,12 +424,16 @@ export function ChatPanel({
 
   async function confirmSendImage() {
     if (!imagePreview) return
+    // `replyTarget` se limpia recién si el envío tiene éxito — si se
+    // limpiaba antes del await y el envío fallaba, un reintento desde este
+    // mismo modal mandaba la imagen suelta, sin el enlace de "respondiendo
+    // a...", sin ningún aviso de que se había perdido.
     const inReplyTo = replyTarget?.id
-    setReplyTarget(null)
     setImageUploading(true)
     setImageError(null)
     try {
       await onSendImage(imagePreview.file, imageCaption.trim() || undefined, inReplyTo)
+      setReplyTarget(null)
       closeImagePreview()
     } catch {
       setImageError('No se pudo enviar la imagen. Intenta de nuevo.')
@@ -756,6 +787,11 @@ export function ChatPanel({
                 {imageError}
               </p>
             )}
+            {sendError && (
+              <p role="alert" className="text-xs text-primary">
+                No se pudo enviar el mensaje: {sendError}
+              </p>
+            )}
             {withinWhatsappWindow ? (
               <p className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground">
                 <Clock className="h-3 w-3 text-success" />
@@ -882,7 +918,7 @@ export function ChatPanel({
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={handleComposerKeyDown}
                 onPaste={handleComposerPaste}
-                disabled={!withinWhatsappWindow}
+                disabled={!withinWhatsappWindow || sending}
                 placeholder={
                   withinWhatsappWindow
                     ? 'Escribe como asesor… (Ctrl+J o Shift+Enter para salto de línea)'
@@ -894,11 +930,11 @@ export function ChatPanel({
               />
               <button
                 type="submit"
-                disabled={!draft.trim() || !withinWhatsappWindow}
+                disabled={!draft.trim() || !withinWhatsappWindow || sending}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-transform active:scale-95 disabled:opacity-40"
                 aria-label="Enviar mensaje"
               >
-                <SendHorizonal className="h-5 w-5" />
+                {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <SendHorizonal className="h-5 w-5" />}
               </button>
             </form>
           </div>

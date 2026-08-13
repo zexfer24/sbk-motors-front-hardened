@@ -24,7 +24,7 @@ export function listContacts(): Contact[] {
   return [...getStore()].sort((a, b) => {
     const aTime = a.lastMessageAt ?? a.createdAt
     const bTime = b.lastMessageAt ?? b.createdAt
-    return aTime < bTime ? 1 : -1
+    return aTime === bTime ? 0 : aTime < bTime ? 1 : -1
   })
 }
 

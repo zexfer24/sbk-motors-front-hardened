@@ -256,7 +256,7 @@ function seedConversations(): DemoConversation[] {
 // (sin Chatwoot configurado) se comporte igual que producción.
 export function listConversations(): ChatwootConversation[] {
   return [...getStore()]
-    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+    .sort((a, b) => (a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? -1 : 1))
     .map((c) => ({ ...c, canWrite: true, labels: [] }))
 }
 

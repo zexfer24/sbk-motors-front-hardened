@@ -75,6 +75,14 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message, replyPreview, onReply, onDelete }: MessageBubbleProps) {
+  // Los hooks van ANTES del return temprano de más abajo — React exige que
+  // se llamen siempre, en el mismo orden, en cada render (Reglas de los
+  // Hooks). Estaban después, lo que en teoría podía desincronizar el orden
+  // de hooks entre renders (p. ej. si React reutiliza esta instancia del
+  // componente para dos mensajes distintos por posición en la lista).
+  const [lightbox, setLightbox] = useState<ChatwootAttachment | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+
   // Notas de sistema (tomar/soltar intervención) — sintéticas y locales a
   // esta sesión, no vienen de Chatwoot (ver toggle() en use-chatwoot.ts para
   // el motivo). Se muestran centradas como aviso, nunca como burbuja de
@@ -97,8 +105,6 @@ export function MessageBubble({ message, replyPreview, onReply, onDelete }: Mess
   // isCustomer, a propósito se saca esa restricción acá.
   const canReply = !message.deleted && !!onReply
   const canDelete = !isCustomer && !!onDelete && !message.deleted
-  const [lightbox, setLightbox] = useState<ChatwootAttachment | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   // Clic derecho (o mantener presionado en móvil, que el navegador traduce
   // al mismo evento) — "Responder" en cualquier mensaje propio o del

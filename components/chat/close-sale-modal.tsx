@@ -343,6 +343,20 @@ export function CloseSaleModal({
     setSubmitting(false)
 
     if ('error' in result) {
+      if (result.error === 'resuelta_pero_asignada') {
+        // La venta YA se registró en este punto (onSubmit primero crea la
+        // orden y solo después toca Chatwoot) — reintentar duplicaría la
+        // venta. El chat quedó resuelto pero no se pudo desasignar; se
+        // avisa y se cierra el modal como en un envío exitoso, en vez de
+        // invitar a un reintento que generaría una segunda orden.
+        clearDraft(conversation.id)
+        reset()
+        onClose()
+        window.alert(
+          'La venta se registró correctamente. El chat quedó marcado como resuelto, pero no se pudo desasignar automáticamente — puede desasignarse a mano si hace falta.',
+        )
+        return
+      }
       setFormError('No se pudo cerrar la venta. Intenta de nuevo.')
       return
     }

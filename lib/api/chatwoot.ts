@@ -136,6 +136,12 @@ export async function toggleIntervention(
   if (!res.ok) {
     if (res.status === 401) throw new Error("Tu sesión expiró — vuelve a iniciar sesión.")
     if (res.status === 403) throw new Error("No tienes permiso para intervenir esta conversación.")
+    if (res.status === 409) {
+      const body = await res.json().catch(() => null)
+      throw new Error(
+        (body?.message as string | undefined) ?? "Otro asesor se adelantó a tomar esta conversación.",
+      )
+    }
     throw new Error("No se pudo cambiar el estado. Intenta de nuevo.")
   }
   return res.json()
@@ -282,6 +288,13 @@ export async function closeConversation(
     `${baseUrl()}/api/chatwoot/conversations/${conversationId}/close`,
     { method: "POST" },
   )
-  if (!res.ok) throw new Error("No se pudo cerrar la conversación")
+  if (!res.ok) {
+    // El código de error (p. ej. "resuelta_pero_asignada") viaja como
+    // `message` para que closeSale (use-chatwoot.ts) lo reenvíe tal cual y
+    // el modal de cierre de venta pueda distinguirlo de un fallo total —
+    // ver el comentario en app/api/chatwoot/conversations/[id]/close/route.ts.
+    const body = await res.json().catch(() => null)
+    throw new Error((body?.error as string | undefined) ?? "error_chatwoot")
+  }
   return res.json()
 }
