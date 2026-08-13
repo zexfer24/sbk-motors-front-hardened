@@ -126,9 +126,16 @@ function assertSafePath(path: string): void {
 const CHATWOOT_TIMEOUT_MS = 10_000
 const CHATWOOT_UPLOAD_TIMEOUT_MS = 30_000 // los adjuntos pueden tardar más, dependen del tamaño del archivo
 
+// `tokenOverride`: para que un mensaje saliente quede atribuido en Chatwoot
+// al asesor real que lo mandó (sender_id), no siempre al dueño del token
+// compartido — ver callerApiToken en lib/chatwoot/authz.ts, que es de
+// donde sale este valor. `null`/`undefined` (el caso normal: admin, asesor
+// sin token vinculado, o cualquier llamada de LECTURA que no pasa este
+// parámetro) se comporta exactamente igual que antes, con config.apiToken.
 export async function chatwootFetch<T>(
   path: string,
   options: RequestInit = {},
+  tokenOverride?: string | null,
 ): Promise<T> {
   const config = getChatwootConfig()
   if (!config) throw new Error("Chatwoot no configurado")
@@ -139,7 +146,7 @@ export async function chatwootFetch<T>(
     ...options,
     headers: {
       "Content-Type": "application/json",
-      api_access_token: config.apiToken,
+      api_access_token: tokenOverride || config.apiToken,
       ...options.headers,
     },
     signal: options.signal ?? AbortSignal.timeout(CHATWOOT_TIMEOUT_MS),
@@ -159,8 +166,13 @@ export async function chatwootFetch<T>(
 
 // Para endpoints que reciben archivos (p. ej. mensajes con adjuntos) —
 // nunca fijar Content-Type a mano con FormData, fetch arma el boundary
-// multipart correcto solo si se lo dejamos.
-export async function chatwootFetchForm<T>(path: string, formData: FormData): Promise<T> {
+// multipart correcto solo si se lo dejamos. `tokenOverride`: ver el
+// comentario de chatwootFetch arriba, mismo criterio.
+export async function chatwootFetchForm<T>(
+  path: string,
+  formData: FormData,
+  tokenOverride?: string | null,
+): Promise<T> {
   const config = getChatwootConfig()
   if (!config) throw new Error("Chatwoot no configurado")
 
@@ -168,7 +180,7 @@ export async function chatwootFetchForm<T>(path: string, formData: FormData): Pr
   const url = `${config.baseUrl}/api/v1/accounts/${config.accountId}${path}`
   const res = await fetch(url, {
     method: "POST",
-    headers: { api_access_token: config.apiToken },
+    headers: { api_access_token: tokenOverride || config.apiToken },
     body: formData,
     signal: AbortSignal.timeout(CHATWOOT_UPLOAD_TIMEOUT_MS),
   })

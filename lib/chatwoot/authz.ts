@@ -25,7 +25,7 @@
 
 import { NextResponse } from "next/server"
 import { chatwootFetch, getChatwootConfig } from "@/lib/chatwoot/client"
-import { CHATWOOT_AGENT_ID_HEADER, USER_ROLE_HEADER } from "@/lib/auth-headers"
+import { CHATWOOT_AGENT_ID_HEADER, CHATWOOT_API_TOKEN_HEADER, USER_ROLE_HEADER } from "@/lib/auth-headers"
 
 const NUMERIC_ID = /^[0-9]{1,18}$/
 
@@ -61,6 +61,17 @@ export function callerIsAdmin(request: Request): boolean {
 export function callerAgentId(request: Request): number | null {
   const raw = request.headers.get(CHATWOOT_AGENT_ID_HEADER)
   return raw && NUMERIC_ID.test(raw) ? Number(raw) : null
+}
+
+// Token personal de Chatwoot del asesor que llama (ver proxy.ts,
+// app_metadata.chatwoot_api_token en Supabase — infra lo carga a mano, acá
+// solo se lee). Null si no hay sesión, no está vinculado, o es un admin —
+// quien lo use debe caer al token compartido (config.apiToken en
+// lib/chatwoot/client.ts) cuando es null, nunca bloquear el envío por su
+// ausencia.
+export function callerApiToken(request: Request): string | null {
+  const raw = request.headers.get(CHATWOOT_API_TOKEN_HEADER)
+  return raw && raw.trim().length > 0 ? raw : null
 }
 
 // admin siempre puede escribir; un asesor solo si la conversación está

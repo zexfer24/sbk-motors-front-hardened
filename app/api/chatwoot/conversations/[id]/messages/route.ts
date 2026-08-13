@@ -3,7 +3,7 @@ import { getConversation, addMessage } from "@/lib/api/chatwoot-demo-store"
 import { getChatwootAgentName, getChatwootConfig, chatwootFetch, chatwootFetchForm } from "@/lib/chatwoot/client"
 import { listSystemEvents } from "@/lib/api/chat-system-events"
 import type { ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
-import { guardConversationRead, guardConversationWrite, callerAgentId } from "@/lib/chatwoot/authz"
+import { guardConversationRead, guardConversationWrite, callerAgentId, callerApiToken } from "@/lib/chatwoot/authz"
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -113,6 +113,10 @@ export async function POST(request: Request, { params }: RouteContext) {
   if (config) {
     try {
       const contentAttributes = await buildOutgoingContentAttributes(request, inReplyTo)
+      // Con el token personal del asesor (si tiene uno vinculado, ver
+      // callerApiToken), Chatwoot atribuye este mensaje a SU sender_id real
+      // — no al dueño del token compartido. null cae al token compartido
+      // dentro de chatwootFetch, mismo comportamiento que antes.
       const data = await chatwootFetch<Record<string, unknown>>(
         `/conversations/${id}/messages`,
         {
@@ -128,6 +132,7 @@ export async function POST(request: Request, { params }: RouteContext) {
             ...(contentAttributes ? { content_attributes: contentAttributes } : {}),
           }),
         },
+        callerApiToken(request),
       )
       return NextResponse.json(mapChatwootMessage(data))
     } catch {
@@ -153,15 +158,16 @@ function validReplyId(raw: unknown): string | null {
   return typeof raw === "string" && /^[0-9]{1,18}$/.test(raw) ? raw : null
 }
 
-// Mensajes salientes creados por este panel siempre le pegan a Chatwoot con
-// el token compartido, así que Chatwoot atribuye el mensaje al agente
-// dueño de ESE token, sin importar qué asesor esté realmente logueado acá
-// (ver mapChatwootMessage más abajo, que lee esto de vuelta). Guardar el
-// nombre real en content_attributes es lo único que permite mostrar
-// después "quién de nosotros" mandó cada mensaje — viaja con el mensaje
-// dentro de Chatwoot, sin necesitar una tabla propia. Si el que llama no
-// tiene un agente de Chatwoot vinculado (admin, o asesor sin vincular),
-// devuelve `null` y el mensaje queda sin ese dato, igual que antes.
+// Red de seguridad para cuando NO hay token personal vinculado (admin, o
+// asesor sin vincular todavía, ver callerApiToken en lib/chatwoot/authz.ts):
+// en ese caso el mensaje le pega a Chatwoot con el token compartido, así que
+// Chatwoot lo atribuye al agente dueño de ESE token, no a quien realmente
+// está logueado acá. Guardar el nombre real en content_attributes es lo que
+// permite mostrar igual "quién de nosotros" mandó el mensaje en nuestra
+// propia UI (ver mapChatwootMessage más abajo, que lee esto de vuelta) — no
+// cambia el sender_id real dentro de Chatwoot, eso ahora lo resuelve el
+// token personal cuando existe. Si el que llama no tiene un agente de
+// Chatwoot vinculado, devuelve `null` y el mensaje queda sin ese dato.
 async function resolveSentByName(request: Request): Promise<string | null> {
   const agentId = callerAgentId(request)
   if (agentId === null) return null
@@ -210,9 +216,13 @@ async function handleAttachmentUpload(request: Request, id: string) {
   outgoingForm.append("attachments[]", file, file.name)
 
   try {
+    // Mismo criterio que el POST de texto de arriba: token personal si el
+    // asesor tiene uno vinculado, si no cae al compartido dentro de
+    // chatwootFetchForm.
     const data = await chatwootFetchForm<Record<string, unknown>>(
       `/conversations/${id}/messages`,
       outgoingForm,
+      callerApiToken(request),
     )
     return NextResponse.json(mapChatwootMessage(data))
   } catch {

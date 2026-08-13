@@ -93,3 +93,36 @@ export function caracasOperatingHourIndex(iso: string): number | null {
   if (hour < OPERATING_HOUR_START || hour >= OPERATING_HOUR_END) return null
   return hour - OPERATING_HOUR_START
 }
+
+// Horario laboral REAL del negocio (confirmado con el cliente,
+// 2026-08-13): lunes a sábado 8:30am-7:30pm, domingo 9:00am-4:30pm.
+// Deliberadamente SEPARADO de OPERATING_HOUR_START/END de arriba — esa
+// constante cubre las 24h del día completo, para el gráfico "Actividad por
+// hora" del Panel, sin relación con cuándo el negocio abre de verdad. Esto
+// es para lib/chatwoot-agent-stats.ts (tiempo muerto), que si necesita
+// saber cuándo el negocio realmente está operando.
+interface WorkHoursWindow {
+  startHour: number
+  startMinute: number
+  endHour: number
+  endMinute: number
+}
+
+const WORK_HOURS_MON_SAT: WorkHoursWindow = { startHour: 8, startMinute: 30, endHour: 19, endMinute: 30 }
+const WORK_HOURS_SUN: WorkHoursWindow = { startHour: 9, startMinute: 0, endHour: 16, endMinute: 30 }
+
+/** Rango [startUtc, endUtc) en ISO UTC del horario laboral real del día `dateStr` (YYYY-MM-DD) en Caracas. */
+export function caracasWorkHoursBoundsUtc(dateStr: string): { startUtc: string; endUtc: string } {
+  // Día de la semana del propio dateStr (0=domingo..6=sábado) — no depende
+  // de zona horaria: dateStr ya es una fecha-calendario de Caracas (sale de
+  // caracasDateStr/caracasToday/shiftDateStr), así que parsearla a
+  // medianoche UTC no la corre a otro día.
+  const dayOfWeek = new Date(`${dateStr}T00:00:00.000Z`).getUTCDay()
+  const window = dayOfWeek === 0 ? WORK_HOURS_SUN : WORK_HOURS_MON_SAT
+
+  const start = new Date(`${dateStr}T00:00:00.000Z`)
+  start.setUTCHours(window.startHour + CARACAS_UTC_OFFSET_HOURS, window.startMinute)
+  const end = new Date(`${dateStr}T00:00:00.000Z`)
+  end.setUTCHours(window.endHour + CARACAS_UTC_OFFSET_HOURS, window.endMinute)
+  return { startUtc: start.toISOString(), endUtc: end.toISOString() }
+}

@@ -20,8 +20,12 @@
 // - "Velocidad de respuesta": de cada mensaje saliente de este asesor, se
 //   mira el mensaje INMEDIATO ANTERIOR en la misma conversación (por
 //   tiempo) — si ese anterior es un mensaje entrante del cliente (no
-//   privado), la diferencia de tiempo es una "muestra". El promedio de esas
-//   muestras cuyo mensaje saliente cae en la ventana (hoy/ayer) es la
+//   privado), la diferencia de tiempo es una "muestra", PERO solo cuenta el
+//   tiempo que cae dentro del horario laboral real del negocio (ver
+//   workHoursOverlapMs más abajo) — un mensaje que llega a las 11pm y se
+//   contesta a las 8am no debe sumar 9 horas de "hueco" si el negocio no
+//   estaba operando en el medio. El promedio de esas muestras (ya
+//   recortadas) cuyo mensaje saliente cae en la ventana (hoy/ayer) es la
 //   velocidad de esa ventana. Una respuesta partida en varios mensajes
 //   seguidos del mismo asesor no genera una segunda muestra — ya se contó
 //   en el primero de esa tanda.
@@ -29,23 +33,27 @@
 // - "Tasa de respuesta": de las conversaciones ASIGNADAS a este asesor que
 //   recibieron al menos un mensaje entrante en la ventana, qué % recibió
 //   al menos una respuesta suya (no necesariamente la inmediata siguiente)
-//   en esa misma ventana.
+//   en esa misma ventana. No depende de duración, no lo toca el recorte a
+//   horario laboral.
 //
-// - "Tiempo muerto" (hoy): suma en segundos de dos cosas —
-//     1) todas las "muestras" de velocidad de respuesta de hoy (el hueco
-//        real entre que el cliente escribió y este asesor contestó).
+// - "Tiempo muerto" (hoy): suma en segundos de dos cosas, ambas recortadas
+//   a horario laboral real (lunes a sábado 8:30am-7:30pm, domingo
+//   9:00am-4:30pm, Caracas — ver caracasWorkHoursBoundsUtc) —
+//     1) todas las "muestras" de velocidad de respuesta de hoy, ya
+//        recortadas como se explica arriba.
 //     2) para cada conversación ASIGNADA a este asesor cuyo último mensaje
 //        (al momento de pedir el reporte) es un entrante todavía sin
 //        contestar, el tiempo transcurrido desde ese mensaje hasta ahora,
-//        recortado a la porción que cae dentro de hoy (si el mensaje llegó
-//        ayer y sigue sin contestar, solo se cuenta desde que empezó hoy —
-//        así no se infla el número por algo que ya venía de antes).
+//        recortado primero a la porción que cae dentro de hoy (si el
+//        mensaje llegó ayer y sigue sin contestar, solo se cuenta desde que
+//        empezó hoy — así no se infla el número por algo que ya venía de
+//        antes) y DESPUÉS a horario laboral dentro de esa porción.
 //   "Ayer" es una aproximación más simple, a propósito: solo la parte 1 (los
 //   huecos que se CERRARON ese día). No hay forma barata de reconstruir,
 //   desde hoy, qué seguía pendiente exactamente al cierre de ayer.
 // ============================================================================
 
-import { caracasDayBoundsUtc, shiftDateStr } from "@/lib/caracas-time"
+import { caracasDateStr, caracasDayBoundsUtc, caracasWorkHoursBoundsUtc, shiftDateStr } from "@/lib/caracas-time"
 import { getChatwootConfig } from "@/lib/chatwoot/client"
 import {
   fetchAgentMessagesFromDb,
@@ -111,6 +119,29 @@ function sortByTime(msgs: AgentStatsMessageInput[]): AgentStatsMessageInput[] {
   return [...msgs].sort((a, b) => new Date(a.createdAtIso).getTime() - new Date(b.createdAtIso).getTime())
 }
 
+// Cuánto de [rangeStartMs, rangeEndMs) cae dentro del horario laboral real
+// del negocio — recorre cada día calendario (Caracas) que el rango toca,
+// porque un hueco de la noche del sábado a la mañana del domingo pasa por
+// DOS horarios distintos (sábado termina 7:30pm, domingo empieza 9am); mirar
+// un solo día no alcanza. Techo de 14 días de seguridad: un hueco real de
+// esta app nunca debería cubrir tantos, evita un loop indefinido si algo
+// raro pasa con las fechas de entrada.
+function workHoursOverlapMs(rangeStartMs: number, rangeEndMs: number): number {
+  if (rangeEndMs <= rangeStartMs) return 0
+  let total = 0
+  let cursor = caracasDateStr(new Date(rangeStartMs))
+  const lastDay = caracasDateStr(new Date(rangeEndMs - 1))
+  for (let i = 0; i < 14; i++) {
+    const bounds = caracasWorkHoursBoundsUtc(cursor)
+    const overlapStart = Math.max(rangeStartMs, new Date(bounds.startUtc).getTime())
+    const overlapEnd = Math.min(rangeEndMs, new Date(bounds.endUtc).getTime())
+    if (overlapEnd > overlapStart) total += overlapEnd - overlapStart
+    if (cursor === lastDay) break
+    cursor = shiftDateStr(cursor, 1)
+  }
+  return total
+}
+
 interface ResponseSample {
   conversationId: number
   outgoingAtIso: string
@@ -147,8 +178,12 @@ export function aggregateAgentStats(
       if (!isAgentOutgoing(current, agentId)) continue
       const prev = sorted[i - 1]
       if (!isCustomerIncoming(prev)) continue
-      const gapSeconds = (new Date(current.createdAtIso).getTime() - new Date(prev.createdAtIso).getTime()) / 1000
-      if (gapSeconds < 0) continue
+      const prevMs = new Date(prev.createdAtIso).getTime()
+      const currentMs = new Date(current.createdAtIso).getTime()
+      if (currentMs < prevMs) continue
+      // Solo cuenta el tiempo dentro de horario laboral — ver el comentario
+      // grande de arriba y workHoursOverlapMs.
+      const gapSeconds = workHoursOverlapMs(prevMs, currentMs) / 1000
       samples.push({ conversationId, outgoingAtIso: current.createdAtIso, gapSeconds })
     }
   }
@@ -194,9 +229,11 @@ export function aggregateAgentStats(
     const last = sortByTime(msgs)[msgs.length - 1]
     if (!isCustomerIncoming(last)) continue
     const lastAt = new Date(last.createdAtIso).getTime()
+    // Primero se recorta a "hoy" (no inflar con un pendiente que ya venía
+    // de antes), después a horario laboral dentro de esa porción.
     const clippedStart = Math.max(lastAt, new Date(todayBounds.startUtc).getTime())
     const clippedEnd = Math.min(now.getTime(), new Date(todayBounds.endUtc).getTime())
-    if (clippedEnd > clippedStart) pendingGapSeconds += (clippedEnd - clippedStart) / 1000
+    if (clippedEnd > clippedStart) pendingGapSeconds += workHoursOverlapMs(clippedStart, clippedEnd) / 1000
   }
 
   const closedGapsToday = samplesToday.reduce((sum, s) => sum + s.gapSeconds, 0)

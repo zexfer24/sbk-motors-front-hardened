@@ -1,7 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { ACCESS_COOKIE, REFRESH_COOKIE, setSessionCookies } from "@/lib/supabase/session"
-import { CHATWOOT_AGENT_ID_HEADER, USER_EMAIL_HEADER, USER_ROLE_HEADER } from "@/lib/auth-headers"
+import {
+  CHATWOOT_AGENT_ID_HEADER,
+  CHATWOOT_API_TOKEN_HEADER,
+  USER_EMAIL_HEADER,
+  USER_ROLE_HEADER,
+} from "@/lib/auth-headers"
 
 type Role = "admin" | "asesor"
 
@@ -105,6 +110,7 @@ interface ResolvedSession {
   role: Role
   email: string
   chatwootAgentId: number | null
+  chatwootApiToken: string | null
   refreshedCookies?: { accessToken: string; refreshToken: string; expiresIn: number }
 }
 
@@ -115,6 +121,16 @@ function roleOf(appMetadata: Record<string, unknown> | null | undefined): Role {
 function chatwootAgentIdOf(appMetadata: Record<string, unknown> | null | undefined): number | null {
   const value = appMetadata?.chatwoot_agent_id
   return typeof value === "number" && Number.isInteger(value) ? value : null
+}
+
+// Token personal de Chatwoot del asesor (infra lo carga a mano en
+// app_metadata.chatwoot_api_token, mismo lugar que chatwoot_agent_id) —
+// para que los mensajes salientes queden atribuidos a él en Chatwoot
+// (sender_id real), no siempre al dueño del token compartido. Ver
+// lib/chatwoot/authz.ts (callerApiToken) para quién lo consume.
+function chatwootApiTokenOf(appMetadata: Record<string, unknown> | null | undefined): string | null {
+  const value = appMetadata?.chatwoot_api_token
+  return typeof value === "string" && value.trim().length > 0 ? value : null
 }
 
 async function resolveSession(request: NextRequest): Promise<ResolvedSession | null> {
@@ -136,6 +152,7 @@ async function resolveSession(request: NextRequest): Promise<ResolvedSession | n
         role: roleOf(data.user.app_metadata),
         email: data.user.email ?? "",
         chatwootAgentId: chatwootAgentIdOf(data.user.app_metadata),
+        chatwootApiToken: chatwootApiTokenOf(data.user.app_metadata),
       }
     }
   }
@@ -148,6 +165,7 @@ async function resolveSession(request: NextRequest): Promise<ResolvedSession | n
         role: roleOf(data.user.app_metadata),
         email: data.user.email ?? "",
         chatwootAgentId: chatwootAgentIdOf(data.user.app_metadata),
+        chatwootApiToken: chatwootApiTokenOf(data.user.app_metadata),
         refreshedCookies: {
           accessToken: data.session.access_token,
           refreshToken: data.session.refresh_token,
@@ -218,11 +236,15 @@ export async function proxy(request: NextRequest) {
   requestHeaders.delete(USER_ROLE_HEADER)
   requestHeaders.delete(USER_EMAIL_HEADER)
   requestHeaders.delete(CHATWOOT_AGENT_ID_HEADER)
+  requestHeaders.delete(CHATWOOT_API_TOKEN_HEADER)
 
   requestHeaders.set(USER_ROLE_HEADER, resolved.role)
   requestHeaders.set(USER_EMAIL_HEADER, resolved.email)
   if (resolved.chatwootAgentId !== null) {
     requestHeaders.set(CHATWOOT_AGENT_ID_HEADER, String(resolved.chatwootAgentId))
+  }
+  if (resolved.chatwootApiToken !== null) {
+    requestHeaders.set(CHATWOOT_API_TOKEN_HEADER, resolved.chatwootApiToken)
   }
 
   const response = NextResponse.next({ request: { headers: requestHeaders } })
