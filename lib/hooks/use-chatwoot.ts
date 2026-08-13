@@ -471,6 +471,24 @@ export function useChatwoot(active: boolean = true) {
     [activeId, loadConversations],
   )
 
+  // Igual que `assign`, pero por id explícito en vez de la conversación
+  // activa — para asignar desde el menú contextual de la lista sin tener
+  // que abrir el chat primero (ver conversation-list.tsx).
+  const assignConversationById = useCallback(
+    async (conversationId: string, agentId: number | null): Promise<{ error: string } | { ok: true }> => {
+      try {
+        await assignConversation(conversationId, agentId)
+        await loadConversations({ silent: true })
+        return { ok: true }
+      } catch (err) {
+        return {
+          error: err instanceof Error ? err.message : "No se pudo asignar la conversación.",
+        }
+      }
+    },
+    [loadConversations],
+  )
+
   // Reemplaza el set de etiquetas de la conversación activa — igual que
   // `assign`, actualiza el estado local al toque (optimista) y confirma
   // contra el servidor; si falla, un `loadConversations` normal en el
@@ -555,6 +573,7 @@ export function useChatwoot(active: boolean = true) {
     markUnread,
     toggle,
     assign,
+    assignConversationById,
     setLabels,
     closeSale,
     startConversation,

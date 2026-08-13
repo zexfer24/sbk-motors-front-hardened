@@ -6,18 +6,21 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronRight,
   Filter,
+  Loader2,
   Mail,
   MessageSquarePlus,
   Search,
   Tag,
   User,
+  UserCog,
   X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatwootConversation } from '@/lib/types/chatwoot'
-import type { ChatwootLabel } from '@/lib/api/chatwoot'
+import { fetchAgents, type Agent, type ChatwootLabel } from '@/lib/api/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { cn } from '@/lib/utils'
@@ -29,6 +32,8 @@ interface ConversationListProps {
   onNewChat: () => void
   /** Clic derecho en un chat ya leído → "Marcar como no leído" (ver matchesStatus más abajo). */
   onMarkUnread: (id: string) => Promise<{ error: string } | { ok: true }>
+  /** Clic derecho → "Asignar a…" (solo admin, ver isAdmin más abajo) — asigna sin necesidad de abrir el chat. */
+  onAssign: (conversationId: string, agentId: number | null) => Promise<{ error: string } | { ok: true }>
   labelCatalog: ChatwootLabel[]
   labelCatalogLoading: boolean
 }
@@ -122,6 +127,7 @@ export function ConversationList({
   onSelect,
   onNewChat,
   onMarkUnread,
+  onAssign,
   labelCatalog,
   labelCatalogLoading,
 }: ConversationListProps) {
@@ -139,6 +145,10 @@ export function ConversationList({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; conversationId: string } | null>(
     null,
   )
+  const [assignSubmenuOpen, setAssignSubmenuOpen] = useState(false)
+  const [assignAgents, setAssignAgents] = useState<Agent[] | null>(null)
+  const [assigning, setAssigning] = useState(false)
+  const [assignError, setAssignError] = useState<string | null>(null)
 
   useEffect(() => {
     try {
@@ -170,12 +180,42 @@ export function ConversationList({
   function handleContextMenu(e: React.MouseEvent, id: string) {
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY, conversationId: id })
+    setAssignSubmenuOpen(false)
+    setAssignError(null)
   }
 
   function handleMarkUnread() {
     if (!contextMenu) return
     void onMarkUnread(contextMenu.conversationId)
     setContextMenu(null)
+  }
+
+  async function handleOpenAssignSubmenu() {
+    setAssignSubmenuOpen((v) => !v)
+    if (!assignAgents) {
+      try {
+        setAssignAgents(await fetchAgents())
+      } catch {
+        setAssignError('No se pudo cargar la lista de asesores.')
+        setAssignAgents([])
+      }
+    }
+  }
+
+  async function handleAssignFromMenu(agentId: number | null) {
+    if (!contextMenu) return
+    setAssigning(true)
+    setAssignError(null)
+    try {
+      const result = await onAssign(contextMenu.conversationId, agentId)
+      if ('error' in result) {
+        setAssignError(result.error)
+        return
+      }
+      setContextMenu(null)
+    } finally {
+      setAssigning(false)
+    }
   }
 
   function clearFilters() {
@@ -221,6 +261,10 @@ export function ConversationList({
     STATUS_FILTERS.map((f) => [f.key, conversations.filter((c) => matchesStatus(c, f.key, myAgentId, isAdmin)).length]),
   ) as Record<StatusKey, number>
   const pendingChatsCount = statusCounts.pending
+
+  const contextConversation = contextMenu
+    ? conversations.find((c) => c.id === contextMenu.conversationId) ?? null
+    : null
 
   const activeFilterCount = (statusFilter ? 1 : 0) + categoryFilters.length
   const filterButtonLabel =
@@ -517,7 +561,6 @@ export function ConversationList({
       </div>
 
       {contextMenu &&
-        conversations.find((c) => c.id === contextMenu.conversationId)?.unreadCount === 0 &&
         createPortal(
           <>
             <button
@@ -537,17 +580,83 @@ export function ConversationList({
             <div
               role="menu"
               style={{ left: contextMenu.x, top: contextMenu.y }}
-              className="fixed z-50 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50"
+              className="fixed z-50 w-56 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50"
             >
-              <button
-                type="button"
-                role="menuitem"
-                onClick={handleMarkUnread}
-                className="flex items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary"
-              >
-                <Mail className="h-3.5 w-3.5" />
-                Marcar como no leído
-              </button>
+              {contextConversation?.unreadCount === 0 && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={handleMarkUnread}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary"
+                >
+                  <Mail className="h-3.5 w-3.5" />
+                  Marcar como no leído
+                </button>
+              )}
+
+              {/* Asignar sin abrir el chat — solo admin, mismo criterio que
+                  /api/chatwoot/conversations/[id]/assign (ver proxy.ts). */}
+              {isAdmin && (
+                <div className={contextConversation?.unreadCount === 0 ? 'border-t border-border' : ''}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleOpenAssignSubmenu}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-secondary"
+                  >
+                    <UserCog className="h-3.5 w-3.5" />
+                    <span className="flex-1">Asignar a…</span>
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
+
+                  {assignSubmenuOpen && (
+                    <div className="max-h-56 overflow-y-auto border-t border-border py-1">
+                      {assignError && <p className="px-3 py-2 text-xs text-primary">{assignError}</p>}
+                      {assignAgents === null ? (
+                        <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Cargando…
+                        </div>
+                      ) : (
+                        <>
+                          {contextConversation?.assigneeId !== null && (
+                            <button
+                              type="button"
+                              disabled={assigning}
+                              onClick={() => handleAssignFromMenu(null)}
+                              className="flex w-full items-center gap-2 px-3 py-2 pl-8 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-60"
+                            >
+                              Sin asignar
+                            </button>
+                          )}
+                          {assignAgents.length === 0 ? (
+                            <p className="px-3 py-2 pl-8 text-xs text-muted-foreground">
+                              No hay asesores vinculados.
+                            </p>
+                          ) : (
+                            assignAgents.map((a) => (
+                              <button
+                                key={a.email}
+                                type="button"
+                                disabled={assigning || a.chatwootAgentId === contextConversation?.assigneeId}
+                                onClick={() => handleAssignFromMenu(a.chatwootAgentId)}
+                                className={cn(
+                                  'flex w-full items-center gap-2 truncate px-3 py-2 pl-8 text-left text-sm transition-colors hover:bg-secondary disabled:cursor-default',
+                                  a.chatwootAgentId === contextConversation?.assigneeId
+                                    ? 'font-semibold text-foreground'
+                                    : 'text-muted-foreground hover:text-foreground',
+                                )}
+                              >
+                                {a.email}
+                              </button>
+                            ))
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </>,
           document.body,

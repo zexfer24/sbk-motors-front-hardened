@@ -9,6 +9,7 @@ import { NewConversationModal } from '@/components/chat/new-conversation-modal'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useChatwoot } from '@/lib/hooks/use-chatwoot'
 import { useLabels } from '@/lib/hooks/use-labels'
+import { useExchangeRate } from '@/lib/hooks/use-exchange-rate'
 import type { StartConversationInput } from '@/lib/api/chatwoot'
 import { cn } from '@/lib/utils'
 
@@ -36,6 +37,7 @@ export function ChatView({ active }: ChatViewProps) {
     markUnread,
     toggle,
     assign,
+    assignConversationById,
     setLabels,
     closeSale,
     startConversation,
@@ -56,6 +58,7 @@ export function ChatView({ active }: ChatViewProps) {
 
   const [showConversationOnMobile, setShowConversationOnMobile] = useState(false)
   const [newChatOpen, setNewChatOpen] = useState(false)
+  const { rate: bcvRate, loading: bcvLoading, available: bcvAvailable } = useExchangeRate()
 
   const totalUnread = useMemo(
     () => conversations.reduce((sum, c) => sum + c.unreadCount, 0),
@@ -155,6 +158,12 @@ export function ChatView({ active }: ChatViewProps) {
             />
             {source === 'chatwoot' ? 'API WhatsApp' : 'Esperando por API'}
           </span>
+          <span className="hidden items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground sm:inline-flex">
+            Tasa BCV ·{' '}
+            <span className="font-mono font-semibold text-foreground">
+              {bcvLoading ? '…' : bcvAvailable && bcvRate !== null ? `Bs ${bcvRate.toFixed(2)}` : 'No disponible'}
+            </span>
+          </span>
           <span className="hidden items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground sm:inline-flex">
             <span className="h-2 w-2 rounded-full bg-primary" />
             {conversations.length} conversaciones
@@ -185,6 +194,7 @@ export function ChatView({ active }: ChatViewProps) {
             onSelect={handleSelect}
             onNewChat={() => setNewChatOpen(true)}
             onMarkUnread={markUnread}
+            onAssign={assignConversationById}
             labelCatalog={labelCatalog}
             labelCatalogLoading={labelCatalogLoading}
           />
