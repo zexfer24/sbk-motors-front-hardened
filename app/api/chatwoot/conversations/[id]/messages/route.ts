@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getConversation, addMessage } from "@/lib/api/chatwoot-demo-store"
 import { getChatwootAgentName, getChatwootConfig, chatwootFetch, chatwootFetchForm } from "@/lib/chatwoot/client"
 import { listSystemEvents } from "@/lib/api/chat-system-events"
+import { mergeSystemEvents } from "@/lib/chatwoot-messages"
 import type { ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
 import { guardConversationRead, guardConversationWrite, callerAgentId, callerApiToken } from "@/lib/chatwoot/authz"
 
@@ -59,29 +60,6 @@ export async function GET(request: Request, { params }: RouteContext) {
     ? conv.messages
     : mergeSystemEvents(conv.messages, await listSystemEvents(id))
   return NextResponse.json({ messages: combined, source: "demo" })
-}
-
-// Intercala las notas de "tomó/soltó la conversación" (ver
-// lib/api/chat-system-events.ts) entre los mensajes reales, ordenadas por
-// fecha — para que aparezcan en el punto del historial en que realmente
-// pasaron, no todas al final.
-function mergeSystemEvents(
-  messages: ChatwootMessage[],
-  events: { content: string; createdAt: string }[],
-): ChatwootMessage[] {
-  if (events.length === 0) return messages
-  const systemMessages: ChatwootMessage[] = events.map((e, i) => ({
-    id: `system-${e.createdAt}-${i}`,
-    content: e.content,
-    messageType: "system",
-    senderType: "human",
-    senderName: null,
-    createdAt: e.createdAt,
-    attachments: [],
-  }))
-  return [...messages, ...systemMessages].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-  )
 }
 
 export async function POST(request: Request, { params }: RouteContext) {

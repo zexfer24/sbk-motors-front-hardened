@@ -17,6 +17,7 @@ import {
   type StartConversationInput,
 } from "@/lib/api/chatwoot"
 import { addOrder } from "@/lib/api/orders"
+import { oldestRealMessageId } from "@/lib/chatwoot-messages"
 import type { ChatwootConversation, ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
 import type { DataSource } from "@/lib/api/shared"
 import type { NewOrderDb } from "@/lib/types/order"
@@ -127,12 +128,24 @@ export function useChatwoot(active: boolean = true) {
   // recarga completa (p. ej. por un evento de SSE) arranca mientras esto
   // sigue en vuelo, el resultado de esta tanda vieja se descarta en vez de
   // pisar el historial ya reemplazado.
+  //
+  // messages[0] NO sirve como cursor a ciegas: puede ser una nota de sistema
+  // sintética (ver mergeSystemEvents en el GET de mensajes), cuyo id no es
+  // el numérico real de Chatwoot que espera `before` — el servidor lo
+  // descartaba en silencio y devolvía la MISMA tanda reciente de siempre, un
+  // bucle sin fin que nunca llegaba a los mensajes viejos (reportado en el
+  // chat de Leonardo Mora, conversation_id 74). oldestRealMessageId busca el
+  // primer mensaje real de verdad, saltando esas notas.
   const loadOlderMessages = useCallback(async () => {
     if (!activeId || messages.length === 0) return
+    const oldestId = oldestRealMessageId(messages)
+    if (!oldestId) {
+      setHasMoreMessages(false)
+      return
+    }
     const requestId = ++messagesRequestId.current
     setLoadingOlderMessages(true)
     try {
-      const oldestId = messages[0].id
       const data = await fetchMessages(activeId, oldestId)
       if (requestId !== messagesRequestId.current) return
       if (data.messages.length === 0) {
