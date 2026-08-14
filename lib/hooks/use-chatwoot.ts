@@ -292,13 +292,33 @@ export function useChatwoot(active: boolean = true) {
     [activeId, messages],
   )
 
+  // El updater de setActiveId debe ser puro — React puede volver a
+  // invocarlo más veces de las que uno espera, y disparar setMessages/
+  // setHasMoreMessages desde adentro (como estaba antes) podía dejar
+  // `messages` desincronizado del `activeId` real por un instante: la
+  // ventana justa para que se vea contenido de la conversación anterior
+  // superpuesto con la nueva, antes de que loadMessages() traiga los
+  // mensajes correctos. Reportado por varios asesores como "mensajes de
+  // otra conversación mezclados" — los mensajes en Chatwoot estaban
+  // limpios, era puramente un desincronce de estado en el navegador.
+  //
+  // activeIdRef reemplaza la lectura de `prev` (que antes solo existía
+  // adentro del updater) para poder seguir evitando vaciar `messages`
+  // cuando se re-selecciona la conversación que ya está activa — sin ese
+  // guard, un doble clic sobre el chat abierto limpiaría messages y
+  // dispararía un refetch de la nada. Sincronizado por efecto (no dentro
+  // de este callback) para cubrir también los otros caminos que cambian
+  // activeId directamente (loadConversations, startConversation).
+  const activeIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    activeIdRef.current = activeId
+  }, [activeId])
+
   const selectConversation = useCallback((id: string) => {
-    setActiveId((prev) => {
-      if (prev === id) return prev
-      setMessages([])
-      setHasMoreMessages(false)
-      return id
-    })
+    if (activeIdRef.current === id) return
+    setActiveId(id)
+    setMessages([])
+    setHasMoreMessages(false)
   }, [])
 
   const send = useCallback(
