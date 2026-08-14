@@ -24,11 +24,20 @@
 //   tiempo que cae dentro del horario laboral real del negocio (ver
 //   workHoursOverlapMs más abajo) — un mensaje que llega a las 11pm y se
 //   contesta a las 8am no debe sumar 9 horas de "hueco" si el negocio no
-//   estaba operando en el medio. El promedio de esas muestras (ya
-//   recortadas) cuyo mensaje saliente cae en la ventana (hoy/ayer) es la
+//   estaba operando en el medio. El PROMEDIO (no la suma) de esas muestras
+//   (ya recortadas) cuyo mensaje saliente cae en la ventana (hoy/ayer) es la
 //   velocidad de esa ventana. Una respuesta partida en varios mensajes
 //   seguidos del mismo asesor no genera una segunda muestra — ya se contó
 //   en el primero de esa tanda.
+//
+//   Además, una muestra solo entra al promedio de Velocidad si el mensaje
+//   entrante y la respuesta caen en el MISMO día calendario (Caracas) — si
+//   un asesor por fin contesta un mensaje que llevaba 3 días esperando, ese
+//   hueco de varios días infla artificialmente el promedio (una sola
+//   muestra enorme lo domina y el número deja de reflejar la velocidad
+//   típica). Ese caso de todos modos se sigue contando completo en "Tiempo
+//   muerto" (ver más abajo) — ahí sí se quiere el total acumulado, acá se
+//   quiere el promedio de respuestas normales del día.
 //
 // - "Tasa de respuesta": de las conversaciones ASIGNADAS a este asesor que
 //   recibieron al menos un mensaje entrante en la ventana, qué % recibió
@@ -146,6 +155,8 @@ interface ResponseSample {
   conversationId: number
   outgoingAtIso: string
   gapSeconds: number
+  /** true si el entrante y el saliente caen en el mismo día calendario (Caracas) — ver Velocidad de respuesta arriba. */
+  sameDay: boolean
 }
 
 /**
@@ -184,7 +195,8 @@ export function aggregateAgentStats(
       // Solo cuenta el tiempo dentro de horario laboral — ver el comentario
       // grande de arriba y workHoursOverlapMs.
       const gapSeconds = workHoursOverlapMs(prevMs, currentMs) / 1000
-      samples.push({ conversationId, outgoingAtIso: current.createdAtIso, gapSeconds })
+      const sameDay = caracasDateStr(new Date(prevMs)) === caracasDateStr(new Date(currentMs))
+      samples.push({ conversationId, outgoingAtIso: current.createdAtIso, gapSeconds, sameDay })
     }
   }
 
@@ -236,6 +248,9 @@ export function aggregateAgentStats(
     if (clippedEnd > clippedStart) pendingGapSeconds += workHoursOverlapMs(clippedStart, clippedEnd) / 1000
   }
 
+  // Tiempo muerto SÍ quiere el total acumulado (incluye respuestas a
+  // backlog de varios días, a propósito) — por eso closedGaps* usa TODAS
+  // las muestras, sin el filtro sameDay que sí aplica a Velocidad.
   const closedGapsToday = samplesToday.reduce((sum, s) => sum + s.gapSeconds, 0)
   const closedGapsYesterday = samplesYesterday.reduce((sum, s) => sum + s.gapSeconds, 0)
 
@@ -243,8 +258,8 @@ export function aggregateAgentStats(
     available: true,
     chatsRespondidos: respondedToday.size,
     chatsRespondidosAyer: respondedYesterday.size,
-    velocidadRespuestaSegundos: average(samplesToday.map((s) => s.gapSeconds)),
-    velocidadRespuestaSegundosAyer: average(samplesYesterday.map((s) => s.gapSeconds)),
+    velocidadRespuestaSegundos: average(samplesToday.filter((s) => s.sameDay).map((s) => s.gapSeconds)),
+    velocidadRespuestaSegundosAyer: average(samplesYesterday.filter((s) => s.sameDay).map((s) => s.gapSeconds)),
     tasaRespuesta: responseRate(todayBounds, respondedToday),
     tasaRespuestaAyer: responseRate(yesterdayBounds, respondedYesterday),
     tiempoMuertoSegundos: closedGapsToday + pendingGapSeconds,

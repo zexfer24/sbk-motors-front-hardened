@@ -177,6 +177,10 @@ describe("aggregateAgentStats", () => {
   })
 
   describe("recorte a horario laboral", () => {
+    // Estos tres casos cruzan de un día calendario a otro, así que ya NO
+    // cuentan para Velocidad (ver "sameDay" más abajo) — pero el recorte a
+    // horario laboral en sí se sigue probando igual, vía Tiempo muerto, que
+    // sí suma estos huecos completos a propósito.
     it("does not count a gap that falls entirely outside working hours", () => {
       // Entrante miércoles 11pm (fuera, cierra 7:30pm) -> saliente jueves
       // 8am (fuera, abre 8:30am). Ningún minuto del hueco cae en horario.
@@ -185,7 +189,8 @@ describe("aggregateAgentStats", () => {
         outgoingBy(1, "2026-08-13T12:00:00.000Z", AGENT), // jue 08:00 local
       ]
       const stats = aggregateAgentStats(messages, [], AGENT, "2026-08-13")
-      expect(stats.velocidadRespuestaSegundos).toBe(0)
+      expect(stats.tiempoMuertoSegundos).toBe(0)
+      expect(stats.velocidadRespuestaSegundos).toBeNull() // cruza de día, no entra al promedio
     })
 
     it("only counts the portion of an overnight gap that overlaps working hours, across two calendar days", () => {
@@ -197,7 +202,8 @@ describe("aggregateAgentStats", () => {
         outgoingBy(1, "2026-08-13T13:00:00.000Z", AGENT), // jue 09:00 local
       ]
       const stats = aggregateAgentStats(messages, [], AGENT, "2026-08-13")
-      expect(stats.velocidadRespuestaSegundos).toBe(3600)
+      expect(stats.tiempoMuertoSegundos).toBe(3600)
+      expect(stats.velocidadRespuestaSegundos).toBeNull()
     })
 
     it("uses the shorter Sunday window when a gap crosses from Saturday into Sunday", () => {
@@ -208,7 +214,39 @@ describe("aggregateAgentStats", () => {
         outgoingBy(1, "2026-08-16T14:00:00.000Z", AGENT), // dom 10:00 local
       ]
       const stats = aggregateAgentStats(messages, [], AGENT, "2026-08-16")
-      expect(stats.velocidadRespuestaSegundos).toBe(1800 + 3600)
+      expect(stats.tiempoMuertoSegundos).toBe(1800 + 3600)
+      expect(stats.velocidadRespuestaSegundos).toBeNull()
+    })
+  })
+
+  describe("Velocidad: promedio, no acumulado", () => {
+    it("averages multiple same-day samples instead of summing them", () => {
+      const messages = [
+        incoming(1, "2026-08-12T14:00:00.000Z"), // 10:00 local
+        outgoingBy(1, "2026-08-12T14:01:00.000Z", AGENT), // +60s
+        incoming(2, "2026-08-12T15:00:00.000Z"), // 11:00 local
+        outgoingBy(2, "2026-08-12T15:03:00.000Z", AGENT), // +180s
+      ]
+      const stats = aggregateAgentStats(messages, [], AGENT, date)
+      // Promedio de 60 y 180 = 120 — si fuera acumulado, sería 240.
+      expect(stats.velocidadRespuestaSegundos).toBe(120)
+    })
+
+    it("excludes a multi-day backlog reply from Velocidad without excluding it from Tiempo muerto", () => {
+      const messages = [
+        // Muestra normal de hoy: 60s.
+        incoming(1, "2026-08-12T14:00:00.000Z"),
+        outgoingBy(1, "2026-08-12T14:01:00.000Z", AGENT),
+        // Backlog de días: entrante lunes, contestado hoy (miércoles) —
+        // sample enorme que NO debe inflar el promedio de Velocidad.
+        incoming(2, "2026-08-10T14:00:00.000Z"), // lunes
+        outgoingBy(2, "2026-08-12T14:00:00.000Z", AGENT), // miércoles, misma ventana "hoy"
+      ]
+      const stats = aggregateAgentStats(messages, [], AGENT, date)
+      // Solo la muestra del mismo día (60s) entra al promedio.
+      expect(stats.velocidadRespuestaSegundos).toBe(60)
+      // Pero el hueco del backlog sí se suma completo a Tiempo muerto.
+      expect(stats.tiempoMuertoSegundos).toBeGreaterThan(3600)
     })
   })
 })
