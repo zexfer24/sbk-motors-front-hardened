@@ -135,6 +135,46 @@ export async function queryChatwootDb<T extends QueryResultRow>(
   }
 }
 
+interface AssignedConversationRow extends QueryResultRow {
+  id: number
+  unread_count: number
+}
+
+// Consulta acotada (solo las conversaciones abiertas de UN agente, nunca el
+// listado completo) para lib/api/release-inactive-agent.ts — se dispara al
+// marcar un asesor Inactivo, así que debe ser barata y no competir con
+// fetchConversationsFromDb. Mismo cómputo de unread_count que
+// CONVERSATIONS_QUERY (ver el comentario de esa constante), pero sin las
+// columnas de contacto/inbox que ese listado sí necesita y esta no.
+const ASSIGNED_OPEN_CONVERSATIONS_QUERY = `
+  SELECT
+    c.display_id AS id,
+    COALESCE(uc.unread_count, 0)::int AS unread_count
+  FROM conversations c
+  LEFT JOIN LATERAL (
+    SELECT LEAST(count(*), 10) AS unread_count
+    FROM messages m2
+    WHERE m2.conversation_id = c.id
+      AND m2.message_type = 0
+      AND (c.agent_last_seen_at IS NULL OR m2.created_at > c.agent_last_seen_at)
+  ) uc ON true
+  WHERE c.account_id = $1 AND c.assignee_id = $2 AND c.status = 0
+`
+
+// `null` si esta vía no está disponible o la consulta falló — mismo
+// contrato que queryChatwootDb, del que depende.
+export async function fetchAssignedOpenConversations(
+  accountId: string,
+  assigneeId: number,
+): Promise<{ id: string; unreadCount: number }[] | null> {
+  const rows = await queryChatwootDb<AssignedConversationRow>(ASSIGNED_OPEN_CONVERSATIONS_QUERY, [
+    Number(accountId),
+    assigneeId,
+  ])
+  if (!rows) return null
+  return rows.map((r) => ({ id: String(r.id), unreadCount: r.unread_count }))
+}
+
 // enum real de Chatwoot v4.16.2 — app/models/conversation.rb:
 // `enum status: { open: 0, resolved: 1, pending: 2, snoozed: 3 }`
 const STATUS_BY_CODE: Record<number, string> = {
