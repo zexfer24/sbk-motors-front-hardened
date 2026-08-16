@@ -25,6 +25,7 @@ import {
 import type { ChatwootConversation, ChatwootMessage } from '@/lib/types/chatwoot'
 import type { NewOrderDb } from '@/lib/types/order'
 import { MessageBubble } from '@/components/chat/message-bubble'
+import { dateSeparatorsFor } from '@/lib/message-date-groups'
 import { CloseSaleModal } from '@/components/chat/close-sale-modal'
 import { ImagePreviewModal } from '@/components/chat/image-preview-modal'
 import { QuickRepliesManagerModal } from '@/components/chat/quick-replies-manager-modal'
@@ -165,6 +166,8 @@ export function ChatPanel({
   // pasó en el mismo render.
   const restoredThisCommitRef = useRef(false)
   const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+  const [interventionHistoryOpen, setInterventionHistoryOpen] = useState(false)
   const {
     replies: quickReplies,
     loading: quickRepliesLoading,
@@ -181,6 +184,23 @@ export function ChatPanel({
     for (const m of messages) map.set(m.id, m)
     return map
   }, [messages])
+
+  // Separador de fecha (píldora "Hoy"/"Ayer"/fecha) antes del primer
+  // mensaje de cada día calendario en horario Caracas — mismo índice que
+  // `messages`, null cuando el mensaje comparte día con el anterior (ver
+  // lib/message-date-groups.ts).
+  const dateSeparators = useMemo(() => dateSeparatorsFor(messages), [messages])
+
+  // Historial de intervenciones (tomó/soltó, ver lib/api/chat-system-events.ts)
+  // — mismos datos que ya se muestran intercalados como píldoras en el hilo,
+  // acá solo se reordenan aparte para el popover admin-only de abajo. Solo
+  // cubre lo que ya está cargado en `messages` — igual que cualquier otro
+  // dato del hilo, si hace falta historial más viejo hay que "Cargar
+  // mensajes anteriores" primero.
+  const interventionHistory = useMemo(
+    () => messages.filter((m) => m.messageType === 'system'),
+    [messages],
+  )
 
   // El objetivo de "responder" es de la conversación anterior si no se
   // limpia al cambiar de chat — se vería el banner de "Respondiendo a..."
@@ -627,6 +647,18 @@ export function ChatPanel({
                 {conversation.inboxName}
               </span>
             )}
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-0.5 font-sans text-[0.65rem] normal-case',
+                conversation.assigneeId !== null
+                  ? 'bg-warning/10 text-warning'
+                  : 'bg-secondary text-muted-foreground',
+              )}
+            >
+              {conversation.assigneeId !== null
+                ? (conversation.assigneeName ?? 'Asesor asignado')
+                : 'Sin asignar'}
+            </span>
             {conversation.typing && (
               <span className="ml-1 text-success">· escribiendo…</span>
             )}
@@ -648,6 +680,58 @@ export function ChatPanel({
             </div>
           )}
         </div>
+
+        {/* Historial de intervenciones — admin-only (el resto del equipo ya
+            ve las mismas notas intercaladas como píldoras en el propio
+            hilo, ver message-bubble.tsx; esto es solo una vista resumida
+            para supervisión, sin pedir nada nuevo al backend). */}
+        {isAdmin && (
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setInterventionHistoryOpen((v) => !v)}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground transition-all hover:text-foreground active:scale-95"
+            >
+              <Clock className="h-4 w-4" />
+              <span className="hidden sm:inline">Historial</span>
+            </button>
+
+            {interventionHistoryOpen && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Cerrar historial de intervenciones"
+                  className="fixed inset-0 z-40"
+                  onClick={() => setInterventionHistoryOpen(false)}
+                />
+                <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-lg border border-border bg-popover shadow-2xl shadow-black/50">
+                  {interventionHistory.length === 0 ? (
+                    <div className="px-3 py-2.5 text-xs text-muted-foreground">
+                      Sin intervenciones registradas en lo cargado de este chat.
+                    </div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto py-1">
+                      {interventionHistory.map((ev) => (
+                        <div key={ev.id} className="px-3 py-2 text-xs">
+                          <p className="text-foreground">{ev.content}</p>
+                          <p className="mt-0.5 text-[0.65rem] text-muted-foreground">
+                            {new Date(ev.createdAt).toLocaleString('es-VE', {
+                              timeZone: 'America/Caracas',
+                              day: '2-digit',
+                              month: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* A diferencia de "Cerrar venta"/"Intervenir", categorizar NO
             depende de canWrite — cualquier asesor puede etiquetar cualquier
@@ -1018,14 +1102,22 @@ export function ChatPanel({
             </div>
           </div>
         ) : (
-          messages.map((m) => (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              onReply={handleReply}
-              onDelete={handleDeleteMessage}
-              replyPreview={m.inReplyTo ? messagesById.get(m.inReplyTo) ?? null : null}
-            />
+          messages.map((m, i) => (
+            <div key={m.id} className="flex flex-col gap-2">
+              {dateSeparators[i] && (
+                <div className="flex w-full justify-center py-1">
+                  <span className="rounded-full bg-secondary/70 px-3 py-1 text-center text-[0.7rem] font-medium text-muted-foreground">
+                    {dateSeparators[i]}
+                  </span>
+                </div>
+              )}
+              <MessageBubble
+                message={m}
+                onReply={handleReply}
+                onDelete={handleDeleteMessage}
+                replyPreview={m.inReplyTo ? messagesById.get(m.inReplyTo) ?? null : null}
+              />
+            </div>
           ))
         )}
 

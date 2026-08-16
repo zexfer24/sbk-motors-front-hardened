@@ -55,6 +55,16 @@ export function caracasDayBoundsUtc(dateStr: string): { startUtc: string; endUtc
   }
 }
 
+/** "10 de agosto de 2026" — como caracasFormatLong pero sin día de la semana, para separadores de fecha compactos (chat). */
+export function caracasFormatShort(dateStr: string): string {
+  return new Intl.DateTimeFormat("es-VE", {
+    timeZone: "America/Caracas",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(`${dateStr}T12:00:00.000Z`))
+}
+
 /** Hora local (0-23) en Caracas de un timestamp ISO. */
 export function caracasHourFromIso(iso: string): number {
   return Number(
