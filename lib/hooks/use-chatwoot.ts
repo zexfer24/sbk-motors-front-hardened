@@ -327,7 +327,10 @@ export function useChatwoot(active: boolean = true) {
     activeIdRef.current = activeId
   }, [activeId])
 
-  const selectConversation = useCallback((id: string) => {
+  // `id === null` deselecciona (clic en espacio en blanco dentro de
+  // WhatsApp, ver chat-view.tsx) — vuelve a mostrar el Centro de
+  // Operaciones en vez de un chat.
+  const selectConversation = useCallback((id: string | null) => {
     if (activeIdRef.current === id) return
     setActiveId(id)
     setMessages([])
@@ -393,20 +396,23 @@ export function useChatwoot(active: boolean = true) {
   )
 
   // Antes este optimistic update solo tocaba `handledBy` (el badge de
-  // arriba) — `assigneeId`/`canWrite` se quedaban con el valor viejo hasta
-  // que llegara una recarga real (SSE + caché de 15s del backend, ver
+  // arriba) — `assigneeId` se quedaba con el valor viejo hasta que llegara
+  // una recarga real (SSE + caché de 15s del backend, ver
   // invalidateConversationsCache en lib/api/chatwoot-sync.ts). Resultado:
   // el badge decía "IA en pausa" pero el compositor de texto seguía sin
-  // aparecer, como si Intervenir no hubiera hecho efecto. Ahora se calcula
-  // acá el mismo `canWrite` que ya deriva el servidor (mismo agente propio
-  // que /intervene le asigna a la conversación cuando SÍ hay uno
-  // vinculado), para que badge y compositor cambien juntos al toque.
+  // aparecer, como si Intervenir no hubiera hecho efecto. Ahora se
+  // actualiza acá mismo para que badge y compositor cambien juntos al
+  // toque.
+  //
+  // `canWrite` (2026-08-16, ver canWriteAssignee en lib/chatwoot/authz.ts)
+  // ya no depende de la asignación — cualquier autenticado puede escribir
+  // siempre, así que ni se recalcula acá.
   //
   // `assigneeName` NO se toca a propósito: solo se muestra en el banner
-  // "Intervenida por X" cuando `canWrite` es `false` (es decir, cuando la
-  // tiene OTRO asesor) — quien hace clic acá nunca ve ese banner para su
-  // propia intervención (ve el compositor), así que no hay nada que
-  // adivinar ahí sin arriesgarse a mostrar un nombre incorrecto.
+  // "Intervenida por X" — informativo (quién la tiene) desde que se sacó
+  // la restricción de escritura, ya no implica que el compositor esté
+  // deshabilitado — así que no hay nada que adivinar ahí sin arriesgarse a
+  // mostrar un nombre incorrecto.
   const toggle = useCallback(async (): Promise<{ error: string } | { ok: true }> => {
     if (!activeId) return { error: "No hay conversación seleccionada." }
     const current = conversations.find((c) => c.id === activeId)
@@ -417,7 +423,6 @@ export function useChatwoot(active: boolean = true) {
       ? { assigneeId: current.assigneeId, canWrite: current.canWrite, handledBy: current.handledBy }
       : null
 
-    const isAdmin = user?.role === "admin"
     const myAgentId = user?.chatwootAgentId ?? null
     // Al soltar (newState false) siempre queda sin asignar. Al tomar
     // (newState true), Chatwoot asigna al agente propio de quien
@@ -426,7 +431,6 @@ export function useChatwoot(active: boolean = true) {
     // deja el assigneeId anterior para ese caso poco común y se confía en
     // la próxima recarga real para corregirlo.
     const optimisticAssigneeId = newState ? (myAgentId ?? current?.assigneeId ?? null) : null
-    const optimisticCanWrite = isAdmin || (myAgentId !== null && optimisticAssigneeId === myAgentId)
 
     setConversations((prev) =>
       prev.map((c) =>
@@ -435,7 +439,7 @@ export function useChatwoot(active: boolean = true) {
               ...c,
               handledBy: newState ? "human" : "ai",
               assigneeId: optimisticAssigneeId,
-              canWrite: optimisticCanWrite,
+              canWrite: true,
             }
           : c,
       ),

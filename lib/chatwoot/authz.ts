@@ -1,31 +1,28 @@
 // ============================================================================
-// Autorización por conversación — quién puede VER y quién puede ESCRIBIR.
+// Autorización por conversación — confirma que el id sea real contra
+// Chatwoot antes de dejar leer o escribir.
 // ============================================================================
 // proxy.ts resuelve "quién eres" y bloquea las rutas admin-only, pero no
-// puede saber si una conversación concreta es tuya: eso depende de a quién
-// esté asignada en Chatwoot. Sin esta comprobación, un filtrado solo en el
-// listado (/api/chatwoot/conversations) sería puramente cosmético — pegarle
-// directo a /api/chatwoot/conversations/<id>/messages lo saltaría. Los IDs
-// de Chatwoot son enteros secuenciales, así que enumerarlos es trivial.
+// valida que una conversación concreta exista de verdad: sin esto, un
+// filtrado solo en el listado (/api/chatwoot/conversations) sería
+// puramente cosmético — pegarle directo a
+// /api/chatwoot/conversations/<id>/messages con cualquier id lo saltaría.
+// Los IDs de Chatwoot son enteros secuenciales, así que enumerarlos es
+// trivial.
 //
-// LECTURA vs ESCRITURA están separadas a propósito: el negocio pidió que
-// todo el equipo vea siempre todas las conversaciones (colaboración,
-// cobertura si alguien falta), pero que solo pueda ESCRIBIR quien la tiene
-// asignada — el admin (supervisor) puede escribir siempre, en cualquiera.
-//
-// Reglas:
-//   LECTURA  — cualquier usuario autenticado, cualquier conversación.
-//   ESCRITURA (mandar mensaje, cerrar venta, etiquetar) —
-//     - admin                       → todo.
-//     - asesor con agente vinculado → solo la conversación asignada a él.
-//     - asesor SIN agente vinculado → ninguna (falla CERRADO).
-//   /intervene (tomar/soltar el control) tiene su propia regla, ver ese
-//   route.ts: tomar un chat SIN asignar sigue abierto a cualquier asesor.
+// 2026-08-16 (pedido explícito del negocio): LECTURA y ESCRITURA son
+// libres para cualquier usuario autenticado, sin importar a quién esté
+// asignada la conversación en Chatwoot — un incidente de n8n (workflow en
+// bucle) reasignó chats a la persona equivocada, y la restricción de
+// escritura anterior ("solo escribe quien la tiene asignada") bloqueaba
+// con 403 al asesor real. Ver canWriteAssignee más abajo, siempre `true`.
+// /intervene (tomar/soltar el control) tiene su propia ruta, ver ese
+// route.ts.
 // ============================================================================
 
 import { NextResponse } from "next/server"
 import { chatwootFetch, getChatwootConfig } from "@/lib/chatwoot/client"
-import { CHATWOOT_AGENT_ID_HEADER, CHATWOOT_API_TOKEN_HEADER, USER_ROLE_HEADER } from "@/lib/auth-headers"
+import { CHATWOOT_AGENT_ID_HEADER, CHATWOOT_API_TOKEN_HEADER } from "@/lib/auth-headers"
 
 const NUMERIC_ID = /^[0-9]{1,18}$/
 
@@ -54,10 +51,6 @@ export async function fetchAssignee(id: string): Promise<ConversationAssignee> {
   }
 }
 
-export function callerIsAdmin(request: Request): boolean {
-  return request.headers.get(USER_ROLE_HEADER) === "admin"
-}
-
 export function callerAgentId(request: Request): number | null {
   const raw = request.headers.get(CHATWOOT_AGENT_ID_HEADER)
   return raw && NUMERIC_ID.test(raw) ? Number(raw) : null
@@ -74,16 +67,18 @@ export function callerApiToken(request: Request): string | null {
   return raw && raw.trim().length > 0 ? raw : null
 }
 
-// admin siempre puede escribir; un asesor solo si la conversación está
-// asignada a él. A propósito NO incluye "sin asignar" — para tomar un chat
-// libre hay que pasar primero por /intervene.
-export function canWriteAssignee(
-  assignee: ConversationAssignee,
-  isAdmin: boolean,
-  agentId: number | null,
-): boolean {
-  if (isAdmin) return true
-  return agentId !== null && assignee.assigneeId === agentId
+// 2026-08-16 (pedido explícito del negocio): antes solo podía escribir
+// quien tenía la conversación asignada — un incidente de n8n (workflow en
+// bucle) reasignó varias conversaciones a la persona equivocada, y esa
+// regla bloqueaba con 403 al asesor real que necesitaba responderle a su
+// propio cliente. En vez de perseguir cada caso mal asignado, se saca la
+// restricción del todo: cualquier usuario autenticado puede escribir en
+// cualquier conversación, sin importar a quién esté asignada en Chatwoot —
+// mismo criterio que ya regía la lectura. `authorizeConversationWrite`
+// sigue validando que la conversación exista de verdad contra Chatwoot,
+// eso no cambia.
+export function canWriteAssignee(): boolean {
+  return true
 }
 
 type AuthzResult =
@@ -116,9 +111,9 @@ async function resolveConversation(
 /**
  * Valida el `id` y confirma que la conversación existe/responde. No
  * restringe por dueño — la lectura es libre para todo el equipo. Devuelve
- * el asignado igual, para que quien lo necesite (p. ej. el nombre del
- * asesor a mostrar en el aviso de "solo lectura") lo derive del servidor
- * en vez de aceptarlo del cliente.
+ * el asignado igual, para que quien lo necesite (p. ej. el badge de
+ * asesor asignado en components/chat/chat-panel.tsx) lo derive del
+ * servidor en vez de aceptarlo del cliente.
  */
 export async function authorizeConversationRead(
   request: Request,
@@ -136,8 +131,11 @@ export async function guardConversationRead(
 }
 
 /**
- * Igual que `authorizeConversationRead`, pero además exige que el llamante
- * pueda ESCRIBIR en esa conversación (ver `canWriteAssignee`).
+ * Igual que `authorizeConversationRead` — la escritura ya no exige nada
+ * extra sobre quién tiene la conversación asignada (ver `canWriteAssignee`,
+ * siempre `true`). Se mantiene como función propia, en vez de fusionarla
+ * con `authorizeConversationRead`, para conservar el seam por si el
+ * negocio pide reintroducir la restricción más adelante.
  */
 export async function authorizeConversationWrite(
   request: Request,
@@ -145,12 +143,7 @@ export async function authorizeConversationWrite(
 ): Promise<AuthzResult> {
   const result = await resolveConversation(request, id)
   if (!result.ok) return result
-  // Modo demo: sin dueño real, no hay nada que proteger.
-  if (!result.assignee) return result
-
-  const isAdmin = callerIsAdmin(request)
-  const agentId = callerAgentId(request)
-  if (canWriteAssignee(result.assignee, isAdmin, agentId)) return result
+  if (canWriteAssignee()) return result
 
   return { ok: false, response: NextResponse.json({ error: "sin_permiso" }, { status: 403 }) }
 }

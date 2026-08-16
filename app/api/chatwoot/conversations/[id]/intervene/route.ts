@@ -7,7 +7,6 @@ import { USER_EMAIL_HEADER } from "@/lib/auth-headers"
 import {
   authorizeConversationRead,
   callerAgentId as getCallerAgentId,
-  callerIsAdmin,
   fetchAssignee,
   isValidConversationId,
 } from "@/lib/chatwoot/authz"
@@ -37,11 +36,12 @@ function displayNameFromEmail(email: string): string {
   )
 }
 
-// Regla propia, distinta de guardConversationWrite: tomar un chat SIN
-// asignar sigue abierto a cualquier asesor (ese es el caso de uso de
-// "Intervenir"). Solo se bloquea robarle el chat a un compañero (asignado a
-// otro) o soltar el control de un chat que no es tuyo — en ambos casos el
-// admin puede siempre.
+// 2026-08-16 (pedido explícito del negocio, ver canWriteAssignee en
+// lib/chatwoot/authz.ts): ya no se valida dueño para tomar ni para soltar
+// — cualquier autenticado puede intervenir o soltar cualquier
+// conversación. Se sigue leyendo el assignee anterior (cuando hace falta)
+// para atribuir bien la nota de sistema de "quién soltó a quién", no para
+// autorizar nada.
 export async function POST(request: Request, { params }: RouteContext) {
   const { id } = await params
   if (!id || !isValidConversationId(id)) {
@@ -53,19 +53,17 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   const config = getChatwootConfig()
   if (config) {
-    const isAdmin = callerIsAdmin(request)
     const agentId = getCallerAgentId(request)
 
-    // Tomar un chat libre como admin no necesita saber quién lo tenía antes
-    // (el admin siempre puede) — se salta esta ida y vuelta extra a Chatwoot
-    // (antes se hacía SIEMPRE, incluso cuando el resultado no iba a cambiar
-    // nada de la decisión) y queda en una sola llamada en vez de dos, que es
-    // buena parte de la latencia notada entre tomar/soltar. El resto de los
-    // casos sí la necesitan para decidir si la acción es válida, así que
-    // siguen igual que antes.
+    // Esta lectura ya NO decide si la acción es válida (eso se sacó, ver
+    // el comentario de arriba) — solo hace falta para redactar bien la
+    // nota de sistema al SOLTAR (previousAssigneeName: a quién se le quitó
+    // el control). Al tomar (intervene=true) esa nota no usa el dueño
+    // anterior, así que se salta esta ida y vuelta extra a Chatwoot para
+    // cualquiera, no solo para el admin como antes.
     let previousAssigneeId: number | null = null
     let previousAssigneeName: string | null = null
-    if (!(isAdmin && intervene)) {
+    if (!intervene) {
       const result = await authorizeConversationRead(request, id)
       if (!result.ok) return result.response
       // authorizeConversationRead ya validó el id contra Chatwoot real
@@ -73,18 +71,6 @@ export async function POST(request: Request, { params }: RouteContext) {
       const assignee = result.assignee!
       previousAssigneeId = assignee.assigneeId
       previousAssigneeName = assignee.assigneeName
-      const mine = agentId !== null && previousAssigneeId === agentId
-
-      if (!isAdmin) {
-        if (intervene) {
-          const takeable = previousAssigneeId === null || mine
-          if (!takeable) {
-            return NextResponse.json({ error: "sin_permiso" }, { status: 403 })
-          }
-        } else if (!mine) {
-          return NextResponse.json({ error: "sin_permiso" }, { status: 403 })
-        }
-      }
     }
 
     try {
@@ -104,14 +90,19 @@ export async function POST(request: Request, { params }: RouteContext) {
       // "Intervenir" no hubiera hecho nada.
       invalidateConversationsCache()
 
-      // Ventana de carrera real entre el chequeo de arriba (línea ~68-86) y
-      // este POST: dos asesores pueden pasar el chequeo `takeable` casi
-      // al mismo tiempo sobre el mismo chat libre, y ambos dispararían este
-      // POST — gana el último en llegar a Chatwoot. Sin esta relectura, el
-      // que pierde la carrera se queda creyendo (por su propia respuesta
-      // 200) que intervino, cuando en realidad Chatwoot ya quedó asignado a
-      // otro. Solo aplica al tomar un chat (intervene=true): soltar
-      // (assignee_id=null) es idempotente y no tiene este riesgo.
+      // Ventana de carrera real: dos asesores pueden hacer clic en
+      // "Intervenir" casi al mismo tiempo sobre el mismo chat, y ambos
+      // dispararían este POST — gana el último en llegar a Chatwoot. Sin
+      // esta relectura, el que pierde la carrera se queda creyendo (por su
+      // propia respuesta 200) que intervino, cuando en realidad Chatwoot
+      // ya quedó asignado a otro. Ya NO bloquea la escritura (eso se sacó,
+      // ver el comentario de arriba de este mismo archivo) — sigue siendo
+      // información real que vale la pena mostrar (a quién quedó asignada
+      // de verdad), así que se mantiene como aviso vía el mismo canal de
+      // error que ya usaba el front (ver interveneError en
+      // components/chat/chat-panel.tsx), solo que ahora nunca implica "no
+      // podés escribir". Solo aplica al tomar un chat (intervene=true):
+      // soltar (assignee_id=null) es idempotente y no tiene este riesgo.
       if (intervene) {
         const confirmed = await fetchAssignee(id)
         if (confirmed.assigneeId !== assigneeId) {

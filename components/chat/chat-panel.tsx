@@ -618,7 +618,7 @@ export function ChatPanel({
           <ArrowLeft className="h-5 w-5" />
         </button>
         {conversation.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
+           
           <img
             src={conversation.avatarUrl}
             alt=""
@@ -961,9 +961,11 @@ export function ChatPanel({
           </button>
         )}
 
-        {/* Tomar un chat libre o soltar el propio siempre está disponible;
-            soltar el de un compañero no — eso evitaría confundir "no puedo
-            tocar este chat" con un botón que sugiere que sí se puede. */}
+        {/* 2026-08-16: tomar o soltar cualquier chat (propio, libre, o de un
+            compañero) está siempre disponible — ya no depende de
+            canWrite/assigneeId (ver canWriteAssignee en
+            lib/chatwoot/authz.ts), la condición queda solo por consistencia
+            de estilo con el resto de los botones de esta fila. */}
         {(conversation.canWrite || conversation.assigneeId === null) && (
           <button
             type="button"
@@ -1133,8 +1135,13 @@ export function ChatPanel({
       </div>
 
       <div className="border-t border-border bg-card/50 px-4 py-3 sm:px-6">
-        {conversation.canWrite ? (
-          <div className="flex flex-col gap-1.5">
+        {/* 2026-08-16: el compositor ya no depende de canWrite (siempre
+            true ahora, ver canWriteAssignee en lib/chatwoot/authz.ts) —
+            cualquier autenticado puede escribir en cualquier conversación,
+            esté o no intervenida. El aviso de abajo ("La IA sigue
+            respondiendo...") ya cubría el caso de escribir sin haber
+            intervenido todavía (antes solo lo veía el admin). */}
+        <div className="flex flex-col gap-1.5">
             {!intervened && (
               <p className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground">
                 <Bot className="h-3 w-3 text-success" />
@@ -1329,24 +1336,7 @@ export function ChatPanel({
                 {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <SendHorizonal className="h-5 w-5" />}
               </button>
             </form>
-          </div>
-        ) : conversation.assigneeId == null ? (
-          <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-background/50 px-4 py-3 text-xs text-muted-foreground">
-            <Bot className="h-4 w-4 text-success" />
-            La IA está respondiendo automáticamente. Pulsa{' '}
-            <span className="font-semibold text-foreground">Intervenir</span>{' '}
-            para tomar el control.
-          </div>
-        ) : (
-          <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-warning/40 bg-warning/5 px-4 py-3 text-xs text-muted-foreground">
-            <Hand className="h-4 w-4 text-warning" />
-            Intervenida por{' '}
-            <span className="font-semibold text-foreground">
-              {conversation.assigneeName ?? 'otro asesor'}
-            </span>{' '}
-            — solo puede escribir quien la tiene asignada.
-          </div>
-        )}
+        </div>
       </div>
 
       {imagePreview && (

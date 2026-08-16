@@ -3,26 +3,22 @@ import { listConversations } from "@/lib/api/chatwoot-demo-store"
 import { getChatwootConfig } from "@/lib/chatwoot/client"
 import { fetchAndSyncConversations } from "@/lib/api/chatwoot-sync"
 import { startWhatsappConversation } from "@/lib/chatwoot/new-conversation"
-import { CHATWOOT_AGENT_ID_HEADER, USER_ROLE_HEADER } from "@/lib/auth-headers"
 import { serverError } from "@/lib/api-errors"
 
-export async function GET(request: Request) {
+export async function GET() {
   const config = getChatwootConfig()
 
   // Todo el equipo ve TODOS los chats siempre (pedido del negocio: cobertura
   // y colaboración, cualquiera puede ver qué está pasando en cualquier
-  // conversación). Lo que sí queda restringido es quién puede ESCRIBIR: se
-  // deriva acá un `canWrite` por conversación — admin siempre, asesor solo
-  // en la suya — para que la UI no reimplemente la regla (ver también
-  // lib/chatwoot/authz.ts, que aplica la misma regla del lado servidor por
-  // si alguien le pega directo a /messages saltándose la UI).
-  const role = request.headers.get(USER_ROLE_HEADER)
-  const agentIdHeader = request.headers.get(CHATWOOT_AGENT_ID_HEADER)
-  const agentId =
-    agentIdHeader && /^[0-9]{1,18}$/.test(agentIdHeader) ? Number(agentIdHeader) : null
-  const canWrite = (assigneeId: number | null) =>
-    role === "admin" || (agentId !== null && assigneeId === agentId)
-
+  // conversación). 2026-08-16 (pedido explícito del negocio, ver
+  // canWriteAssignee en lib/chatwoot/authz.ts): la escritura dejó de estar
+  // restringida a quien tiene la conversación asignada — un incidente de
+  // n8n reasignó chats a la persona equivocada y esa regla bloqueaba con
+  // 403 al asesor real. `canWrite` se mantiene como campo (en vez de
+  // borrarlo) para que la UI no tenga que cambiar de qué campo lee — ahora
+  // simplemente siempre es `true` para cualquier autenticado, mismo
+  // criterio que ya aplica lib/chatwoot/authz.ts del lado servidor por si
+  // alguien le pega directo a /messages saltándose la UI.
   if (config) {
     const result = await fetchAndSyncConversations()
     if (!result.ok) {
@@ -31,7 +27,7 @@ export async function GET(request: Request) {
 
     const conversations = result.conversations.map((c) => ({
       ...c,
-      canWrite: canWrite(c.assigneeId),
+      canWrite: true,
     }))
 
     // `partial: true` = alguna página del barrido falló y esto es lo que se

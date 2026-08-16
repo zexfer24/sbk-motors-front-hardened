@@ -71,6 +71,17 @@ export function ChatView({ active }: ChatViewProps) {
     setShowConversationOnMobile(true)
   }
 
+  // Clic en un espacio en blanco dentro de WhatsApp (el encabezado, ver
+  // más abajo) — deselecciona el chat activo y vuelve a mostrar el Centro
+  // de Operaciones (components/views/operations-center-view.tsx) en vez
+  // del panel de chat. `true` en showConversationOnMobile a propósito: en
+  // mobile así se ve el Centro de Operaciones en la sección derecha en vez
+  // de caer de vuelta a la lista.
+  function handleDeselect() {
+    selectConversation(null)
+    setShowConversationOnMobile(true)
+  }
+
   async function handleStartConversation(input: StartConversationInput) {
     const result = await startConversation(input)
     if ('ok' in result) setShowConversationOnMobile(true)
@@ -128,7 +139,20 @@ export function ChatView({ active }: ChatViewProps) {
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-6">
+      {/* onClick acá arriba, no en un botón aparte: pedido del negocio —
+          clic en el espacio en blanco del encabezado (ningún hijo de acá
+          tiene su propio onClick, así que el clic siempre burbujea hasta
+          este handler) deselecciona el chat activo y vuelve a mostrar el
+          Centro de Operaciones. handleDeselect ya no-opea sola si no hay
+          nada seleccionado (mismo guard que ya usa selectConversation). */}
+      <header
+        onClick={handleDeselect}
+        title={activeConversation ? 'Volver al Centro de Operaciones' : undefined}
+        className={cn(
+          'flex items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-6',
+          activeConversation && 'cursor-pointer',
+        )}
+      >
         <div className="flex items-center gap-3">
           <span className="flex h-9 w-9 items-center justify-center rounded-md bg-[oklch(0.55_0.14_150)]/20 text-[oklch(0.72_0.17_150)]">
             <WhatsappIcon className="h-5 w-5" />
