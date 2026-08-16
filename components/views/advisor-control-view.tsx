@@ -11,8 +11,6 @@ import {
   Loader2,
   MessagesSquare,
   Target,
-  TrendingDown,
-  TrendingUp,
   User,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
@@ -21,21 +19,8 @@ import { assignConversation, fetchAgents, type Agent } from '@/lib/api/chatwoot'
 import type { ChatwootConversation } from '@/lib/types/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
 import { cn } from '@/lib/utils'
-
-// Mismo shape que devuelve GET /api/dashboard/agents — se define acá en vez
-// de importar lib/chatwoot-agent-stats.ts (ese módulo tira de lib/chatwoot/
-// client.ts, server-only, no debe entrar al bundle de cliente).
-interface AgentStatsDto {
-  available: boolean
-  chatsRespondidos: number
-  chatsRespondidosAyer: number
-  velocidadRespuestaSegundos: number | null
-  velocidadRespuestaSegundosAyer: number | null
-  tasaRespuesta: number | null
-  tasaRespuestaAyer: number | null
-  tiempoMuertoSegundos: number
-  tiempoMuertoSegundosAyer: number
-}
+import { formatDuration, trendPercent, type AgentStatsDto } from '@/lib/agent-stats-format'
+import { MetricTile } from '@/components/dashboard/agent-metric-tile'
 
 interface AgentWithStats {
   email: string
@@ -284,25 +269,6 @@ function StatsRow({
   )
 }
 
-// "0" está bien como número real (nadie respondió mensajes ayer): la
-// diferencia real con "sin dato" es null/undefined, no 0 — por eso no se
-// puede reusar directo el percentTrend de dashboard/kpis (ese asume que
-// "hoy" y "ayer" siempre existen).
-function trendPercent(today: number, yesterday: number): number | null {
-  if (yesterday === 0) return today > 0 ? 100 : null
-  return Math.round(((today - yesterday) / yesterday) * 1000) / 10
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null) return '—'
-  if (seconds < 60) return `${Math.round(seconds)}s`
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  const rest = minutes % 60
-  return rest > 0 ? `${hours}h ${rest}m` : `${hours}h`
-}
-
 function AdvisorCard({
   agent,
   assignedCount,
@@ -384,13 +350,13 @@ function AdvisorCard({
         <p className="px-4 py-6 text-center text-xs text-muted-foreground">Métricas no disponibles.</p>
       ) : (
         <div className="grid grid-cols-2 gap-px bg-border/60">
-          <Metric
+          <MetricTile
             icon={MessagesSquare}
             label="Respondidos hoy"
             value={String(stats.chatsRespondidos)}
             trend={trendPercent(stats.chatsRespondidos, stats.chatsRespondidosAyer)}
           />
-          <Metric
+          <MetricTile
             icon={Gauge}
             label="Velocidad"
             value={formatDuration(stats.velocidadRespuestaSegundos)}
@@ -401,7 +367,7 @@ function AdvisorCard({
             }
             invert
           />
-          <Metric
+          <MetricTile
             icon={Target}
             label="Tasa de respuesta"
             value={stats.tasaRespuesta !== null ? `${stats.tasaRespuesta}%` : '—'}
@@ -411,7 +377,7 @@ function AdvisorCard({
                 : null
             }
           />
-          <Metric
+          <MetricTile
             icon={Clock}
             label="Tiempo muerto"
             value={formatDuration(stats.tiempoMuertoSegundos)}
@@ -421,48 +387,6 @@ function AdvisorCard({
         </div>
       )}
     </article>
-  )
-}
-
-// `invert`: para "velocidad" y "tiempo muerto", MENOS es mejor — una flecha
-// hacia arriba (más segundos que ayer) se pinta como advertencia, no como
-// logro, al revés que en "respondidos" y "tasa de respuesta".
-function Metric({
-  icon: Icon,
-  label,
-  value,
-  trend,
-  invert = false,
-}: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  value: string
-  trend: number | null
-  invert?: boolean
-}) {
-  const isGood = trend !== null && (invert ? trend <= 0 : trend >= 0)
-  const TrendIcon = trend !== null && trend >= 0 ? TrendingUp : TrendingDown
-  return (
-    <div className="flex flex-col gap-1 bg-card px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-muted-foreground">
-        <Icon className="h-3 w-3" />
-        <span className="text-[0.65rem]">{label}</span>
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <span className="font-mono text-base font-bold tabular-nums text-foreground">{value}</span>
-        {trend !== null && (
-          <span
-            className={cn(
-              'inline-flex items-center gap-0.5 text-[0.65rem] font-semibold',
-              isGood ? 'text-success' : 'text-warning',
-            )}
-          >
-            <TrendIcon className="h-2.5 w-2.5" />
-            {Math.abs(trend)}%
-          </span>
-        )}
-      </div>
-    </div>
   )
 }
 

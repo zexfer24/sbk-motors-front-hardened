@@ -6,6 +6,7 @@ import { WhatsappIcon } from '@/components/chat/whatsapp-icon'
 import { ConversationList } from '@/components/chat/conversation-list'
 import { ChatPanel } from '@/components/chat/chat-panel'
 import { NewConversationModal } from '@/components/chat/new-conversation-modal'
+import { OperationsCenterView } from '@/components/views/operations-center-view'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useChatwoot } from '@/lib/hooks/use-chatwoot'
 import { useLabels } from '@/lib/hooks/use-labels'
@@ -229,14 +230,7 @@ export function ChatView({ active }: ChatViewProps) {
               onCloseSale={closeSale}
             />
           ) : (
-            <div className="flex flex-1 items-center justify-center">
-              <div className="text-center">
-                <WhatsappIcon className="mx-auto h-12 w-12 text-muted-foreground/20" />
-                <p className="mt-4 text-sm text-muted-foreground">
-                  Selecciona una conversación para ver los mensajes
-                </p>
-              </div>
-            </div>
+            <OperationsCenterView conversations={conversations} onSelectConversation={handleSelect} />
           )}
         </section>
       </div>
