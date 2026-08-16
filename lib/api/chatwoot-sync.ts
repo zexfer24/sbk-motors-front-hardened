@@ -11,6 +11,24 @@ import { upsertContactFromChatwoot } from "@/lib/api/contacts-demo-store"
 import { listInboxes } from "@/lib/chatwoot/inboxes"
 import { fetchConversationsFromDb } from "@/lib/api/chatwoot-db"
 
+// message_type 2 = "activity" (avisos nativos de Chatwoot: "Conversación
+// asignada a X", "resuelta", etc. — ver mapChatwootMessage en
+// app/api/chatwoot/conversations/[id]/messages/route.ts, que ya oculta este
+// mismo tipo del hilo). Sin este filtro, si la nota de actividad más
+// reciente quedaba al final del array `messages` del payload de listado,
+// el preview de la lista de conversaciones mostraba ese texto nativo en vez
+// del último mensaje real enviado o recibido.
+const ACTIVITY_MESSAGE_TYPE = 2
+
+function lastRealMessage(raw: Record<string, unknown>): Record<string, unknown> | null {
+  if (!Array.isArray(raw.messages)) return null
+  const messages = raw.messages as Record<string, unknown>[]
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (Number(messages[i].message_type ?? 0) !== ACTIVITY_MESSAGE_TYPE) return messages[i]
+  }
+  return null
+}
+
 export function mapChatwootConversation(
   raw: Record<string, unknown>,
   inboxNames: Map<number, string>,
@@ -18,11 +36,7 @@ export function mapChatwootConversation(
   const meta = (raw.meta as Record<string, unknown>) ?? {}
   const sender = (meta.sender as Record<string, unknown>) ?? {}
   const assignee = meta.assignee as Record<string, unknown> | null | undefined
-  const lastMsg = (
-    Array.isArray(raw.messages) && raw.messages.length > 0
-      ? (raw.messages[raw.messages.length - 1] as Record<string, unknown>)
-      : null
-  ) as Record<string, unknown> | null
+  const lastMsg = lastRealMessage(raw)
   const inboxId = raw.inbox_id != null ? Number(raw.inbox_id) : null
 
   return {

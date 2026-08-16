@@ -245,10 +245,17 @@ const CONVERSATIONS_QUERY = `
   LEFT JOIN inboxes ib ON ib.id = c.inbox_id
   LEFT JOIN contacts ct ON ct.id = c.contact_id
   LEFT JOIN users u ON u.id = c.assignee_id
+  -- message_type 2 = "activity" (avisos nativos de Chatwoot: "Conversación
+  -- asignada a X", etc. — ver el mismo filtro en mapChatwootMessage,
+  -- app/api/chatwoot/conversations/[id]/messages/route.ts). Sin excluirlo
+  -- acá, si esa nota era la fila más reciente en messages, el preview de
+  -- la lista de conversaciones mostraba ese texto nativo en vez del último
+  -- mensaje real enviado o recibido (ver el mismo fix del lado API en
+  -- lastRealMessage, lib/api/chatwoot-sync.ts).
   LEFT JOIN LATERAL (
     SELECT m.content, m.created_at
     FROM messages m
-    WHERE m.conversation_id = c.id
+    WHERE m.conversation_id = c.id AND m.message_type != 2
     ORDER BY m.created_at DESC
     LIMIT 1
   ) lm ON true
