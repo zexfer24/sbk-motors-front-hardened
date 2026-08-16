@@ -24,6 +24,8 @@ import { fetchAgents, type Agent, type ChatwootLabel } from '@/lib/api/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { cn } from '@/lib/utils'
+import { matchesStatus, STATUS_FILTERS, type StatusKey } from '@/lib/conversation-filters'
+import { formatRelativeTime } from '@/lib/relative-time'
 
 interface ConversationListProps {
   conversations: ChatwootConversation[]
@@ -38,15 +40,6 @@ interface ConversationListProps {
   labelCatalogLoading: boolean
 }
 
-type StatusKey = 'pending' | 'open_human' | 'unassigned' | 'resolved'
-
-const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
-  { key: 'pending', label: 'Sin contestar' },
-  { key: 'open_human', label: 'Abiertas' },
-  { key: 'unassigned', label: 'Libres' },
-  { key: 'resolved', label: 'Cerrados' },
-]
-
 // Preferencia personal, no un filtro que oculte nada — por eso vive aparte
 // de statusFilter/categoryFilters (no se toca con "Limpiar filtros") y se
 // guarda en localStorage para que cada asesor la vea a su gusto en cada
@@ -55,7 +48,7 @@ type SortOrder = 'asc' | 'desc'
 const SORT_ORDER_KEY = 'sbk:chat-sort-order'
 // BUG (encontrado 2026-08-13, confirmado en producción con las 405
 // conversaciones reales): el orden usaba createdAt (cuándo se abrió la
-// conversación por primera vez) pero cada fila MUESTRA formatTime(lastMessageAt)
+// conversación por primera vez) pero cada fila MUESTRA formatRelativeTime(lastMessageAt)
 // (más abajo) — un campo distinto. Un cliente que escribió por primera vez
 // hace semanas y volvió a escribir hace 4h se ordenaba por esas semanas, no
 // por esas 4h: la lista saltaba sin patrón aparente para quien la mira
@@ -68,58 +61,12 @@ const SORT_OPTIONS: { key: SortOrder; label: string; icon: typeof ArrowUpNarrowW
   { key: 'desc', label: 'Más recientes arriba', icon: ArrowDownNarrowWide },
 ]
 
-// Reglas del negocio (2026-08-12, corregida 2026-08-13, personalizada por
-// asesor 2026-08-12, corregida de nuevo 2026-08-12 — "Sin contestar" NO es
-// lo sin asignar, es lo YA asignado que nadie contestó todavía):
-//   "Sin contestar" y "Abiertas" son EXCLUYENTES entre sí y solo cubren
-//     conversaciones YA ASIGNADAS (a alguien) — lo sin asignar vive aparte,
-//     en "Libres". Se parten según si tienen mensajes nuevos sin atender:
-//       - "Sin contestar" = asignada (a quien sea) Y con mensajes sin leer.
-//       - "Abiertas"      = asignada (a quien sea) Y ya al día (sin leer = 0).
-//     Para un ASESOR, "a quien sea" se reduce a "a mí" — cada uno ve ahí
-//     solo lo suyo. Para el ADMIN (supervisor), es "a cualquiera" — ve el
-//     estado de TODO el equipo en ambos tabs, no solo lo sin asignar como
-//     antes (eso ya lo cubre "Libres" aparte, ver más abajo). Un asesor sin
-//     agente de Chatwoot vinculado (myAgentId null) no puede "tener" nada
-//     asignado — sin la comprobación explícita de myAgentId,
-//     `assigneeId === myAgentId` sería `null === null` y le mostraría TODO
-//     lo sin asignar como si fuera suyo.
-//   "Libres" (nuevo, corregida 2026-08-12) — abierta, SIN asignar Y con
-//     mensajes sin leer (no cualquier chat sin asignar — eso ya lo cubre
-//     "Todos", que muestra todo sin filtrar). Sin exigir sin leer, "Libres"
-//     terminaba mostrando lo mismo que "Todos" filtrado apenas por
-//     asignación, lo cual confundía a simple vista. Con esto, "Libres" es
-//     de verdad "nadie lo tiene Y nadie lo atendió todavía" — el mismo
-//     criterio de la vieja "Sin contestar" global, ahora con nombre propio.
-//     Sin esto, con las dos de arriba restringidas a "lo mío", un asesor no
-//     tenía forma de ver ni tomar un chat nuevo por su cuenta — dependía de
-//     que un admin se lo asignara a mano desde el Centro de Control. Este
-//     tab mantiene el "Intervenir" de toda la vida como autoservicio.
-//   "Cerrados" — resuelta. Hoy la única forma de resolver una conversación
-//     desde este sistema es cerrar una venta (ver
-//     app/api/chatwoot/conversations/[id]/close/route.ts), así que ya
-//     coincide con "cuando cierran una venta" sin necesidad de otro campo.
-function matchesStatus(
-  c: ChatwootConversation,
-  status: StatusKey,
-  myAgentId: number | null,
-  isAdmin: boolean,
-) {
-  const assigneeId = c.assigneeId ?? null
-  const isMine = myAgentId !== null && assigneeId === myAgentId
-  switch (status) {
-    case 'unassigned':
-      return c.status === 'open' && assigneeId === null && c.unreadCount > 0
-    case 'pending':
-      if (c.status !== 'open' || assigneeId === null) return false
-      return (isAdmin || isMine) && c.unreadCount > 0
-    case 'open_human':
-      if (c.status !== 'open' || assigneeId === null) return false
-      return (isAdmin || isMine) && c.unreadCount === 0
-    case 'resolved':
-      return c.status === 'resolved'
-  }
-}
+// Reglas de las pestañas de estado — ver lib/conversation-filters.ts
+// (matchesStatus, STATUS_FILTERS): extraído ahí para poder probarlo sin
+// renderizar React. "Sin contestar" y "Abiertas" cubren lo YA ASIGNADO (a
+// quien sea, ver el 2026-08-16 en ese archivo — dejó de reducirse a "lo
+// mío" por pedido explícito del negocio); "Libres" es lo sin asignar y sin
+// contestar; "Cerrados" es por status.
 
 export function ConversationList({
   conversations,
@@ -133,7 +80,6 @@ export function ConversationList({
 }: ConversationListProps) {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
-  const myAgentId = user?.chatwootAgentId ?? null
 
   const [search, setSearch] = useState('')
   // null = "Todos" (default). Estado y categorías se combinan con AND —
@@ -228,7 +174,7 @@ export function ConversationList({
       c.contactName.toLowerCase().includes(search.toLowerCase()) ||
       c.phone.includes(search)
     if (!matchesSearch) return false
-    if (statusFilter && !matchesStatus(c, statusFilter, myAgentId, isAdmin)) return false
+    if (statusFilter && !matchesStatus(c, statusFilter)) return false
     if (categoryFilters.length > 0 && !categoryFilters.some((cat) => c.labels.includes(cat))) {
       return false
     }
@@ -236,7 +182,7 @@ export function ConversationList({
   })
 
   // Por última actividad (lastMessageAt) — el mismo campo que ya se muestra
-  // como la hora de cada fila (formatTime(c.lastMessageAt) más abajo), y el
+  // como la hora de cada fila (formatRelativeTime(c.lastMessageAt) más abajo), y el
   // comportamiento estándar de cualquier chat (WhatsApp incluido): el que
   // más recientemente escribió sube/baja según el toggle. Antes usaba
   // createdAt (cuándo se abrió la conversación, no cuándo fue el último
@@ -258,7 +204,7 @@ export function ConversationList({
   // botón "Filtros" cerrado (el más urgente de vigilar); el resto solo se
   // ve al abrir el menú.
   const statusCounts = Object.fromEntries(
-    STATUS_FILTERS.map((f) => [f.key, conversations.filter((c) => matchesStatus(c, f.key, myAgentId, isAdmin)).length]),
+    STATUS_FILTERS.map((f) => [f.key, conversations.filter((c) => matchesStatus(c, f.key)).length]),
   ) as Record<StatusKey, number>
   const pendingChatsCount = statusCounts.pending
 
@@ -505,7 +451,7 @@ export function ConversationList({
                       {c.contactName}
                     </p>
                     <span className="shrink-0 font-mono text-[0.65rem] text-muted-foreground">
-                      {formatTime(c.lastMessageAt)}
+                      {formatRelativeTime(c.lastMessageAt)}
                     </span>
                   </div>
                   <div className="mt-0.5 flex items-center justify-between gap-2">
@@ -663,22 +609,4 @@ export function ConversationList({
         )}
     </aside>
   )
-}
-
-function formatTime(iso: string | null) {
-  if (!iso) return ''
-  const date = new Date(iso)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-
-  if (diffMin < 1) return 'ahora'
-  if (diffMin < 60) return `${diffMin}min`
-
-  const diffHours = Math.floor(diffMin / 60)
-  if (diffHours < 24) return `${diffHours}h`
-
-  const diffDays = Math.floor(diffHours / 24)
-  if (diffDays === 1) return 'ayer'
-  return date.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' })
 }
