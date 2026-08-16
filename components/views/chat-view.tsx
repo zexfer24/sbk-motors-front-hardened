@@ -61,8 +61,17 @@ export function ChatView({ active }: ChatViewProps) {
   const [newChatOpen, setNewChatOpen] = useState(false)
   const { rate: bcvRate, loading: bcvLoading, available: bcvAvailable } = useExchangeRate()
 
+  // Cuenta CONVERSACIONES con al menos un mensaje sin leer, no la suma de
+  // mensajes sin leer (2026-08-16, pedido explícito del negocio) — mismo
+  // criterio que ya usa StatsRow en advisor-control-view.tsx (Centro de
+  // Control). Antes sumaba unreadCount de todas, así que el número podía
+  // superar la cantidad real de conversaciones. Nota: este badge sigue sin
+  // filtrar por status (a diferencia del Centro de Control, que exige
+  // status === 'open'), así que puede seguir difiriendo de ese número en
+  // chats pendientes/en espera con mensajes sin leer — no se unificó ese
+  // criterio acá, queda para una decisión aparte si hace falta.
   const totalUnread = useMemo(
-    () => conversations.reduce((sum, c) => sum + c.unreadCount, 0),
+    () => conversations.filter((c) => c.unreadCount > 0).length,
     [conversations],
   )
 
