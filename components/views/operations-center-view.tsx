@@ -40,6 +40,11 @@ export function OperationsCenterView({ conversations, onSelectConversation }: Op
   const [myStats, setMyStats] = useState<MyStatsResponse | null>(null)
   const [statsError, setStatsError] = useState<string | null>(null)
   const [statsLoading, setStatsLoading] = useState(true)
+  // Mismo nombre/patrón que onlyUnanswered en advisor-control-view.tsx (el
+  // filtro equivalente del Centro de Control admin) — acá filtra la lista
+  // de "Mis conversaciones asignadas" a solo las que tienen mensajes sin
+  // leer, sin pedir nada nuevo al backend.
+  const [onlyUnanswered, setOnlyUnanswered] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -73,6 +78,9 @@ export function OperationsCenterView({ conversations, onSelectConversation }: Op
           return new Date(bTime).getTime() - new Date(aTime).getTime()
         })
   const unreadCount = myConversations.filter((c) => c.unreadCount > 0).length
+  const visibleConversations = onlyUnanswered
+    ? myConversations.filter((c) => c.unreadCount > 0)
+    : myConversations
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -155,19 +163,39 @@ export function OperationsCenterView({ conversations, onSelectConversation }: Op
                   {myConversations.length}
                 </span>
                 {unreadCount > 0 && (
-                  <span className="rounded-full bg-unread px-2 py-0.5 text-xs font-semibold text-primary-foreground">
+                  <button
+                    type="button"
+                    onClick={() => setOnlyUnanswered((v) => !v)}
+                    aria-pressed={onlyUnanswered}
+                    title={onlyUnanswered ? 'Mostrar todas mis conversaciones' : 'Mostrar solo las sin contestar'}
+                    className={cn(
+                      'rounded-full px-2 py-0.5 text-xs font-semibold text-primary-foreground transition-colors',
+                      onlyUnanswered ? 'bg-unread ring-2 ring-unread/50 ring-offset-1 ring-offset-background' : 'bg-unread hover:opacity-90',
+                    )}
+                  >
                     {unreadCount} sin contestar
-                  </span>
+                  </button>
+                )}
+                {onlyUnanswered && (
+                  <button
+                    type="button"
+                    onClick={() => setOnlyUnanswered(false)}
+                    className="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Ver todas
+                  </button>
                 )}
               </h2>
 
-              {myConversations.length === 0 ? (
+              {visibleConversations.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-                  No tenés conversaciones abiertas asignadas ahora mismo.
+                  {onlyUnanswered
+                    ? 'No tenés conversaciones sin contestar ahora mismo.'
+                    : 'No tenés conversaciones abiertas asignadas ahora mismo.'}
                 </p>
               ) : (
                 <div className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border">
-                  {myConversations.map((c) => {
+                  {visibleConversations.map((c) => {
                     const color = avatarColor(c.phone || c.contactName)
                     return (
                       <button
