@@ -63,10 +63,10 @@ const SORT_OPTIONS: { key: SortOrder; label: string; icon: typeof ArrowUpNarrowW
 
 // Reglas de las pestañas de estado — ver lib/conversation-filters.ts
 // (matchesStatus, STATUS_FILTERS): extraído ahí para poder probarlo sin
-// renderizar React. "Sin contestar" y "Abiertas" cubren lo YA ASIGNADO (a
-// quien sea, ver el 2026-08-16 en ese archivo — dejó de reducirse a "lo
-// mío" por pedido explícito del negocio); "Libres" es lo sin asignar y sin
-// contestar; "Cerrados" es por status.
+// renderizar React. "Sin contestar" es todo lo abierto con mensajes sin
+// leer, asignado o no (ver el 2026-08-16 en ese archivo); "Abiertas" es lo
+// YA ASIGNADO y al día; "Libres" (sin asignar y sin leer) es subconjunto
+// de "Sin contestar"; "Cerrados" es por status.
 
 export function ConversationList({
   conversations,
@@ -427,7 +427,7 @@ export function ConversationList({
               >
                 <div className="relative shrink-0">
                   {c.avatarUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
+                     
                     <img
                       src={c.avatarUrl}
                       alt=""

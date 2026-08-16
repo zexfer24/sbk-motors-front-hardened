@@ -39,8 +39,13 @@ describe("matchesStatus — 2026-08-16: Abiertas/Sin contestar dejan de filtrar 
     expect(matchesStatus(c, "open_human")).toBe(true)
   })
 
-  it("'pending' sigue excluyendo lo sin asignar (eso es 'unassigned'/Libres)", () => {
+  it("'pending' también incluye lo sin asignar y sin contestar (pedido explícito, 2026-08-16 tarde)", () => {
     const c = conv({ status: "open", assigneeId: null, unreadCount: 3 })
+    expect(matchesStatus(c, "pending")).toBe(true)
+  })
+
+  it("'pending' sigue excluyendo lo sin asignar y YA contestado (unreadCount 0)", () => {
+    const c = conv({ status: "open", assigneeId: null, unreadCount: 0 })
     expect(matchesStatus(c, "pending")).toBe(false)
   })
 

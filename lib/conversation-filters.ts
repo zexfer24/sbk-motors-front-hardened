@@ -29,13 +29,21 @@ export const STATUS_FILTERS: { key: StatusKey; label: string }[] = [
 // estado de TODO el equipo en ambas pestañas, igual que ya veía el admin —
 // nada queda fuera de "Sin contestar"/"Abiertas" por motivo de asignación,
 // solo por status/leído.
+//
+// 2026-08-16, más tarde (pedido explícito del negocio): "Sin contestar"
+// pasa a abarcar TAMBIÉN lo sin asignar — antes excluía a propósito lo sin
+// asignar (eso vivía solo en "Libres"). Ahora "Sin contestar" es todo lo
+// abierto con mensajes sin leer, esté o no asignado; "Libres" (sin asignar
+// y sin leer) queda como subconjunto de "Sin contestar", no aparte. Solo
+// se tocó "pending" — "Abiertas" (open_human) sigue exigiendo asignado,
+// no se pidió cambiarla.
 export function matchesStatus(c: ChatwootConversation, status: StatusKey): boolean {
   const assigneeId = c.assigneeId ?? null
   switch (status) {
     case "unassigned":
       return c.status === "open" && assigneeId === null && c.unreadCount > 0
     case "pending":
-      return c.status === "open" && assigneeId !== null && c.unreadCount > 0
+      return c.status === "open" && c.unreadCount > 0
     case "open_human":
       return c.status === "open" && assigneeId !== null && c.unreadCount === 0
     case "resolved":
