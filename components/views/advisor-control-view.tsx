@@ -163,7 +163,14 @@ export function AdvisorControlView({ active = true }: { active?: boolean }) {
     return map
   }, [agentStats])
 
-  const totalUnread = open.filter((c) => c.unreadCount > 0).length
+  // 2026-08-16 (pedido explícito del negocio): unificado con el badge de
+  // WhatsApp (chat-view.tsx) — cuenta sobre TODAS las conversaciones, no
+  // solo `open`, para que "Sin contestar (equipo)" coincida exactamente
+  // con ese número. `open` sigue existiendo tal cual para openCount, la
+  // sección de sin asignar y el desglose por asesor (byAgent) — eso no se
+  // tocó, así que el desglose individual puede no sumar exacto al total si
+  // hay chats pending/snoozed asignados con mensajes sin leer.
+  const totalUnread = conversations.filter((c) => c.unreadCount > 0).length
   const loading = conversationsLoading && conversations.length === 0
 
   return (
