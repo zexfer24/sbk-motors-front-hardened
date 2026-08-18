@@ -27,6 +27,8 @@ import { useAuth } from '@/lib/hooks/use-auth'
 import { cn } from '@/lib/utils'
 import { groupByReadStatus, matchesStatus, STATUS_FILTERS, type StatusKey } from '@/lib/conversation-filters'
 import { formatRelativeTime } from '@/lib/relative-time'
+import { normalizarTexto } from '@/lib/text-normalize'
+import { MIN_SEARCH_PHRASE_LENGTH } from '@/lib/api/search-conversations-by-content'
 
 interface ConversationListProps {
   conversations: ChatwootConversation[]
@@ -86,6 +88,11 @@ export function ConversationList({
   const viewerAgentId = user?.chatwootAgentId ?? null
 
   const [search, setSearch] = useState('')
+  // Ids que matchean por CONTENIDO de mensajes (no nombre/teléfono) — ver el
+  // efecto debounced más abajo y app/api/chatwoot/conversations/search-content.
+  // Aparte de `filtered`/`matchesSearch` porque depende de una llamada async
+  // a la DB, no de datos ya en memoria.
+  const [contentMatchIds, setContentMatchIds] = useState<Set<string>>(new Set())
   // null = "Todos" (default). Estado y categorías se combinan con AND —
   // dentro de categorías, cualquiera de las seleccionadas cuenta (OR).
   const [statusFilter, setStatusFilter] = useState<StatusKey | null>(null)
@@ -109,6 +116,43 @@ export function ConversationList({
       // orden por defecto, sin persistencia entre visitas.
     }
   }, [])
+
+  // Buscar por contenido de mensajes (no solo nombre/teléfono) requiere
+  // consultar la DB de Chatwoot — a diferencia del resto del buscador, que
+  // es 100% en memoria. Debounce de 300ms para no pegarle a la tabla de
+  // mensajes en cada tecla, y un gate de MIN_SEARCH_PHRASE_LENGTH para no
+  // buscar frases de 1-2 letras contra toda la tabla. AbortController evita
+  // que una respuesta vieja (de una tecla anterior) pise el resultado de
+  // la búsqueda más reciente si llegan fuera de orden.
+  useEffect(() => {
+    const trimmed = search.trim()
+    if (trimmed.length < MIN_SEARCH_PHRASE_LENGTH) {
+      setContentMatchIds(new Set())
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      fetch(`/api/chatwoot/conversations/search-content?q=${encodeURIComponent(trimmed)}`, {
+        signal: controller.signal,
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && Array.isArray(data.conversationIds)) {
+            setContentMatchIds(new Set(data.conversationIds))
+          }
+        })
+        .catch(() => {
+          // Abortado (nueva tecla) o error de red — el filtro de
+          // nombre/teléfono sigue funcionando solo, sin esto.
+        })
+    }, 300)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [search])
 
   function handleSortOrderChange(next: SortOrder) {
     setSortOrder(next)
@@ -175,8 +219,9 @@ export function ConversationList({
 
   const filtered = conversations.filter((c) => {
     const matchesSearch =
-      c.contactName.toLowerCase().includes(search.toLowerCase()) ||
-      c.phone.includes(search)
+      normalizarTexto(c.contactName).includes(normalizarTexto(search)) ||
+      c.phone.includes(search) ||
+      contentMatchIds.has(c.id)
     if (!matchesSearch) return false
     if (statusFilter && !matchesStatus(c, statusFilter, viewerAgentId)) return false
     if (categoryFilters.length > 0 && !categoryFilters.some((cat) => c.labels.includes(cat))) {

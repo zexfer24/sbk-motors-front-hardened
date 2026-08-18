@@ -351,3 +351,43 @@ export async function fetchConversationsFromDb(
     return null
   }
 }
+
+interface ContentMatchRow extends QueryResultRow {
+  conversation_id: number
+}
+
+// Buscador de la bandeja de WhatsApp por CONTENIDO de mensajes (ver
+// lib/api/search-conversations-by-content.ts) — el listado en memoria del
+// front solo trae el último mensaje de cada conversación (lastMessage), así
+// que una frase mencionada en un mensaje viejo no es encontrable filtrando
+// solo lo que ya llegó al navegador; hace falta esta consulta directa.
+//
+// regexp_replace(...,'[¡!]','','g') normaliza mayúsculas/signos de
+// exclamación en ambos lados (contenido guardado y frase buscada) para que
+// "¡CAMBIO DE REPUESTO!" matchee "cambio de repuesto" — a costa de no poder
+// usar el índice GIN de trigramas de esta columna en este caso puntual
+// (index_messages_on_content), aceptable con el volumen actual de la tabla
+// (sequential scan igual corre en bajos ms, medido). LIMIT 500 es solo un
+// techo de seguridad, igual que CONVERSATIONS_PAGE_SAFETY_CAP en
+// chatwoot-sync.ts — no debería alcanzarse con el volumen actual.
+const CONTENT_SEARCH_QUERY = `
+  SELECT DISTINCT conversation_id
+  FROM messages
+  WHERE account_id = $1
+    AND regexp_replace(lower(content), '[¡!]', '', 'g')
+        LIKE '%' || regexp_replace(lower($2), '[¡!]', '', 'g') || '%'
+  LIMIT 500
+`
+
+// Devuelve `null` si esta vía no está disponible o la consulta falló —
+// mismo contrato que fetchConversationsFromDb. searchConversationsByContent
+// (lib/api/search-conversations-by-content.ts) trata `null` como "sin
+// resultados", nunca lanza hacia la ruta API.
+export async function searchConversationIdsByContent(
+  accountId: string,
+  phrase: string,
+): Promise<string[] | null> {
+  const rows = await queryChatwootDb<ContentMatchRow>(CONTENT_SEARCH_QUERY, [Number(accountId), phrase])
+  if (!rows) return null
+  return rows.map((r) => String(r.conversation_id))
+}
