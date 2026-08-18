@@ -27,6 +27,7 @@ import { groupByReadStatus, matchesStatus, STATUS_FILTERS, type StatusKey } from
 import { formatRelativeTime } from '@/lib/relative-time'
 import { normalizarTexto } from '@/lib/text-normalize'
 import { MIN_SEARCH_PHRASE_LENGTH } from '@/lib/api/search-conversations-by-content'
+import { splitSnippetForHighlight } from '@/lib/message-snippet'
 
 interface ConversationListProps {
   conversations: ChatwootConversation[]
@@ -482,6 +483,7 @@ export function ConversationList({
                         onSelect={onSelect}
                         onContextMenu={handleContextMenu}
                         searchSnippet={contentMatches.get(c.id)}
+                        searchPhrase={search}
                       />
                     ))}
                   </ConversationSection>
@@ -497,6 +499,7 @@ export function ConversationList({
                         onSelect={onSelect}
                         onContextMenu={handleContextMenu}
                         searchSnippet={contentMatches.get(c.id)}
+                        searchPhrase={search}
                       />
                     ))}
                   </ConversationSection>
@@ -514,6 +517,7 @@ export function ConversationList({
               onSelect={onSelect}
               onContextMenu={handleContextMenu}
               searchSnippet={contentMatches.get(c.id)}
+              searchPhrase={search}
             />
           ))
         )}
@@ -660,6 +664,7 @@ function ConversationRow({
   onSelect,
   onContextMenu,
   searchSnippet,
+  searchPhrase,
 }: {
   conversation: ChatwootConversation
   index: number
@@ -671,6 +676,10 @@ function ConversationRow({
    * lastMessage cuando está presente, para mostrar DÓNDE aparece la frase
    * en vez del último mensaje del hilo (que puede no tener nada que ver). */
   searchSnippet?: string
+  /** La frase buscada tal cual la tipeó el asesor — se usa junto con
+   * searchSnippet para resaltar (splitSnippetForHighlight) dónde aparece
+   * dentro del fragmento. */
+  searchPhrase: string
 }) {
   const color = avatarColor(c.phone || c.contactName)
   return (
@@ -744,8 +753,18 @@ function ConversationRow({
             <span className="line-clamp-2">
               {c.typing ? (
                 <span className="text-success">escribiendo…</span>
+              ) : searchSnippet ? (
+                splitSnippetForHighlight(searchSnippet, searchPhrase).map((segment, i) =>
+                  segment.highlighted ? (
+                    <mark key={i} className="rounded-sm bg-warning/40 text-foreground">
+                      {segment.text}
+                    </mark>
+                  ) : (
+                    <span key={i}>{segment.text}</span>
+                  ),
+                )
               ) : (
-                (searchSnippet ?? c.lastMessage)
+                c.lastMessage
               )}
             </span>
           </p>

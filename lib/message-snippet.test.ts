@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildSnippet } from "@/lib/message-snippet"
+import { buildSnippet, splitSnippetForHighlight } from "@/lib/message-snippet"
 
 describe("buildSnippet", () => {
   it("recorta con '…' de ambos lados cuando la frase está en medio de un texto largo", () => {
@@ -35,5 +35,45 @@ describe("buildSnippet", () => {
   it("si la frase no aparece en el contenido, devuelve el contenido sin tocar (fallback)", () => {
     const content = "hola, buenos días"
     expect(buildSnippet(content, "cambio de repuesto", 10)).toBe(content)
+  })
+})
+
+describe("splitSnippetForHighlight", () => {
+  it("parte el texto en segmentos normal/resaltado alrededor de la frase", () => {
+    expect(splitSnippetForHighlight("quería el cambio de repuesto del motor", "cambio de repuesto")).toEqual([
+      { text: "quería el ", highlighted: false },
+      { text: "cambio de repuesto", highlighted: true },
+      { text: " del motor", highlighted: false },
+    ])
+  })
+
+  it("es case-insensitive: resalta 'CAMBIO DE REPUESTO' preservando su casing original", () => {
+    expect(splitSnippetForHighlight("Consulta por CAMBIO DE REPUESTO del motor", "cambio de repuesto")).toEqual([
+      { text: "Consulta por ", highlighted: false },
+      { text: "CAMBIO DE REPUESTO", highlighted: true },
+      { text: " del motor", highlighted: false },
+    ])
+  })
+
+  it("resalta TODAS las apariciones de la frase, no solo la primera", () => {
+    expect(splitSnippetForHighlight("moto moto moto", "moto")).toEqual([
+      { text: "moto", highlighted: true },
+      { text: " ", highlighted: false },
+      { text: "moto", highlighted: true },
+      { text: " ", highlighted: false },
+      { text: "moto", highlighted: true },
+    ])
+  })
+
+  it("sin match (fallback de buildSnippet, contenido sin la frase) devuelve un único segmento sin resaltar", () => {
+    expect(splitSnippetForHighlight("hola, buenos días", "cambio de repuesto")).toEqual([
+      { text: "hola, buenos días", highlighted: false },
+    ])
+  })
+
+  it("frase vacía o solo espacios no resalta nada", () => {
+    expect(splitSnippetForHighlight("hola, buenos días", "   ")).toEqual([
+      { text: "hola, buenos días", highlighted: false },
+    ])
   })
 })
