@@ -72,9 +72,20 @@ interface MessageBubbleProps {
   onReply?: (message: ChatwootMessage) => void
   /** Solo se ofrece "Eliminar" (clic derecho) si se pasa esto — y solo aplica a lo que mandó el propio negocio, nunca al cliente. */
   onDelete?: (message: ChatwootMessage) => void
+  /** Click en la cita ("respondiendo a...") → salta al mensaje original y lo resalta. Solo se vuelve clickeable si además `replyPreview` está resuelto (ver más abajo) — sin el original cargado no hay a dónde saltar. */
+  onJumpToQuoted?: (messageId: string) => void
+  /** true un momento después de que este mensaje fue el destino de un salto (ver chat-panel.tsx) — resalta la burbuja para que el asesor la ubique de un vistazo. */
+  highlighted?: boolean
 }
 
-export function MessageBubble({ message, replyPreview, onReply, onDelete }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  replyPreview,
+  onReply,
+  onDelete,
+  onJumpToQuoted,
+  highlighted,
+}: MessageBubbleProps) {
   // Los hooks van ANTES del return temprano de más abajo — React exige que
   // se llamen siempre, en el mismo orden, en cada render (Reglas de los
   // Hooks). Estaban después, lo que en teoría podía desincronizar el orden
@@ -139,38 +150,51 @@ export function MessageBubble({ message, replyPreview, onReply, onDelete }: Mess
         <div
           onContextMenu={handleContextMenu}
           className={cn(
-            'rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-[0_1px_0_0_oklch(0_0_0/0.3)]',
+            'rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-[0_1px_0_0_oklch(0_0_0/0.3)] transition-shadow duration-500',
             isCustomer &&
               'rounded-bl-sm border border-border bg-secondary text-foreground',
             isAi &&
               'rounded-br-sm border border-success/30 bg-success/10 text-foreground',
             isHuman &&
               'rounded-br-sm border border-warning/30 bg-warning/10 text-foreground',
+            // Click-to-jump: resalta brevemente la burbuja destino en vez de
+            // dejar que el asesor la busque a ojo entre los mensajes ya
+            // cargados (ver onJumpToQuoted en chat-panel.tsx).
+            highlighted && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
           )}
         >
           {message.inReplyTo && (
-            <div
-              className={cn(
-                'mb-1.5 rounded-md border-l-2 px-2 py-1 text-xs',
-                isCustomer ? 'border-muted-foreground/40 bg-background/40' : 'border-current/40 bg-black/10',
-              )}
-            >
-              {replyPreview ? (
-                <>
-                  <p className="font-semibold opacity-80">
-                    {replyPreview.messageType === 'incoming'
-                      ? 'Cliente'
-                      : (replyPreview.senderName ?? senderLabels[replyPreview.senderType])}
-                  </p>
-                  <p className="truncate opacity-70">
-                    {replyPreview.content ||
-                      (replyPreview.attachments.length > 0 ? '📎 Adjunto' : '')}
-                  </p>
-                </>
-              ) : (
+            replyPreview ? (
+              <button
+                type="button"
+                onClick={() => onJumpToQuoted?.(message.inReplyTo!)}
+                disabled={!onJumpToQuoted}
+                className={cn(
+                  'mb-1.5 block w-full rounded-md border-l-2 px-2 py-1 text-left text-xs transition-colors',
+                  isCustomer ? 'border-muted-foreground/40 bg-background/40' : 'border-current/40 bg-black/10',
+                  onJumpToQuoted && 'cursor-pointer hover:brightness-110',
+                )}
+              >
+                <p className="font-semibold opacity-80">
+                  {replyPreview.messageType === 'incoming'
+                    ? 'Cliente'
+                    : (replyPreview.senderName ?? senderLabels[replyPreview.senderType])}
+                </p>
+                <p className="truncate opacity-70">
+                  {replyPreview.content ||
+                    (replyPreview.attachments.length > 0 ? '📎 Adjunto' : '')}
+                </p>
+              </button>
+            ) : (
+              <div
+                className={cn(
+                  'mb-1.5 rounded-md border-l-2 px-2 py-1 text-xs',
+                  isCustomer ? 'border-muted-foreground/40 bg-background/40' : 'border-current/40 bg-black/10',
+                )}
+              >
                 <p className="italic opacity-60">Mensaje original no disponible</p>
-              )}
-            </div>
+              </div>
+            )
           )}
 
           {message.deleted ? (

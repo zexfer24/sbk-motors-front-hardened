@@ -102,14 +102,21 @@ export async function sendMessage(
   return res.json()
 }
 
+// `files` en plural (2026-08-18, pedido del cliente): seleccionar/pegar
+// varias fotos a la vez y mandarlas en un solo mensaje — el backend de
+// Chatwoot ya soporta varios `attachments[]` en un solo POST (ver
+// handleAttachmentUpload en app/api/chatwoot/conversations/[id]/messages/route.ts,
+// que itera `getAll("file")`). Un solo `content` (caption) para todo el
+// lote, igual que WhatsApp cuando se manda un grupo de fotos con un pie de
+// foto compartido.
 export async function sendImageMessage(
   conversationId: string,
-  file: File,
+  files: File[],
   caption?: string,
   inReplyTo?: string,
 ): Promise<ChatwootMessage> {
   const formData = new FormData()
-  formData.append("file", file)
+  for (const file of files) formData.append("file", file)
   if (caption?.trim()) formData.append("content", caption.trim())
   if (inReplyTo) formData.append("inReplyTo", inReplyTo)
 

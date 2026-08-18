@@ -42,3 +42,33 @@ describe("mapChatwootConversation — preview del último mensaje", () => {
     expect(conv.lastMessageAt).toBeNull()
   })
 })
+
+describe("mapChatwootConversation — lastMessageStatus (check/doble check de la miniatura)", () => {
+  it("expone el status normalizado cuando el ÚLTIMO mensaje real es saliente", () => {
+    const raw = rawConversation([
+      { message_type: 0, content: "hola", created_at: 1755000100 },
+      { message_type: 1, content: "buenas, en qué te ayudo", created_at: 1755000200, status: "read" },
+    ])
+    expect(mapChatwootConversation(raw, new Map()).lastMessageStatus).toBe("read")
+  })
+
+  it("es null cuando el último mensaje real es del cliente, aunque haya un saliente antes con status", () => {
+    const raw = rawConversation([
+      { message_type: 1, content: "buenas, en qué te ayudo", created_at: 1755000100, status: "read" },
+      { message_type: 0, content: "gracias, ya elegí", created_at: 1755000200 },
+    ])
+    expect(mapChatwootConversation(raw, new Map()).lastMessageStatus).toBeNull()
+  })
+
+  it("un status desconocido/'failed' en el último saliente cae a 'sent', no se pierde el ícono", () => {
+    const raw = rawConversation([
+      { message_type: 1, content: "buenas", created_at: 1755000100, status: "failed" },
+    ])
+    expect(mapChatwootConversation(raw, new Map()).lastMessageStatus).toBe("sent")
+  })
+
+  it("es null cuando no hay ningún mensaje real todavía", () => {
+    const raw = rawConversation([])
+    expect(mapChatwootConversation(raw, new Map()).lastMessageStatus).toBeNull()
+  })
+})

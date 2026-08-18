@@ -5,6 +5,7 @@ import {
   ArrowUpNarrowWide,
   Bot,
   Check,
+  CheckCheck,
   ChevronDown,
   ChevronRight,
   Filter,
@@ -24,7 +25,7 @@ import { fetchAgents, type Agent, type ChatwootLabel } from '@/lib/api/chatwoot'
 import { avatarColor } from '@/lib/avatar-color'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { cn } from '@/lib/utils'
-import { matchesStatus, STATUS_FILTERS, type StatusKey } from '@/lib/conversation-filters'
+import { groupByReadStatus, matchesStatus, STATUS_FILTERS, type StatusKey } from '@/lib/conversation-filters'
 import { formatRelativeTime } from '@/lib/relative-time'
 
 interface ConversationListProps {
@@ -80,6 +81,9 @@ export function ConversationList({
 }: ConversationListProps) {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
+  // Scoped a "lo mío" a propósito para el filtro "Asignados" — ver el
+  // comentario de matchesStatus en lib/conversation-filters.ts.
+  const viewerAgentId = user?.chatwootAgentId ?? null
 
   const [search, setSearch] = useState('')
   // null = "Todos" (default). Estado y categorías se combinan con AND —
@@ -174,7 +178,7 @@ export function ConversationList({
       c.contactName.toLowerCase().includes(search.toLowerCase()) ||
       c.phone.includes(search)
     if (!matchesSearch) return false
-    if (statusFilter && !matchesStatus(c, statusFilter)) return false
+    if (statusFilter && !matchesStatus(c, statusFilter, viewerAgentId)) return false
     if (categoryFilters.length > 0 && !categoryFilters.some((cat) => c.labels.includes(cat))) {
       return false
     }
@@ -204,7 +208,7 @@ export function ConversationList({
   // botón "Filtros" cerrado (el más urgente de vigilar); el resto solo se
   // ve al abrir el menú.
   const statusCounts = Object.fromEntries(
-    STATUS_FILTERS.map((f) => [f.key, conversations.filter((c) => matchesStatus(c, f.key)).length]),
+    STATUS_FILTERS.map((f) => [f.key, conversations.filter((c) => matchesStatus(c, f.key, viewerAgentId)).length]),
   ) as Record<StatusKey, number>
   const pendingChatsCount = statusCounts.pending
 
@@ -409,100 +413,59 @@ export function ConversationList({
               {search ? 'Sin resultados' : 'No hay conversaciones'}
             </p>
           </div>
-        ) : (
-          sorted.map((c, i) => {
-            const isActive = c.id === activeId
-            const color = avatarColor(c.phone || c.contactName)
+        ) : statusFilter === 'assigned' ? (
+          // Dentro de "Asignados", separado en dos secciones en vez de una
+          // lista plana — antes la info de leído/no-leído estaba (el badge
+          // numérico de cada fila) pero el agrupamiento no era intuitivo:
+          // había que leer fila por fila para separar lo urgente de lo ya
+          // contestado. groupByReadStatus preserva el orden de `sorted`
+          // dentro de cada sección (ver lib/conversation-filters.ts).
+          (() => {
+            const { unread, read } = groupByReadStatus(sorted)
             return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => onSelect(c.id)}
-                onContextMenu={(e) => handleContextMenu(e, c.id)}
-                style={{ animationDelay: `${Math.min(i, 20) * 40}ms` }}
-                className={cn(
-                  'animate-row-assemble flex items-start gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors w-full',
-                  isActive ? 'bg-primary/10' : 'hover:bg-secondary/60',
+              <>
+                {unread.length > 0 && (
+                  <ConversationSection title="No leídos" count={unread.length}>
+                    {unread.map((c, i) => (
+                      <ConversationRow
+                        key={c.id}
+                        conversation={c}
+                        index={i}
+                        isActive={c.id === activeId}
+                        onSelect={onSelect}
+                        onContextMenu={handleContextMenu}
+                      />
+                    ))}
+                  </ConversationSection>
                 )}
-              >
-                <div className="relative shrink-0">
-                  {c.avatarUrl ? (
-                     
-                    <img
-                      src={c.avatarUrl}
-                      alt=""
-                      className="h-11 w-11 rounded-full object-cover ring-1 ring-border"
-                    />
-                  ) : (
-                    <div
-                      className="flex h-11 w-11 items-center justify-center rounded-full text-sm font-semibold ring-1 ring-border"
-                      style={{ backgroundColor: color.bg, color: color.fg }}
-                    >
-                      {c.contactName.charAt(0)}
-                    </div>
-                  )}
-                  {c.online && (
-                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-sidebar bg-success" />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-semibold text-foreground">
-                      {c.contactName}
-                    </p>
-                    <span className="shrink-0 font-mono text-[0.65rem] text-muted-foreground">
-                      {formatRelativeTime(c.lastMessageAt)}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 flex items-center justify-between gap-2">
-                    <p className="truncate text-xs text-muted-foreground">
-                      {c.typing ? (
-                        <span className="text-success">escribiendo…</span>
-                      ) : (
-                        c.lastMessage
-                      )}
-                    </p>
-                    {c.unreadCount > 0 && (
-                      <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-unread px-1 font-mono text-[0.6rem] font-bold text-primary-foreground">
-                        {c.unreadCount}
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-1 flex items-center gap-1">
-                    <span
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.6rem] font-medium',
-                        c.handledBy === 'ai'
-                          ? 'bg-success/15 text-success'
-                          : 'bg-warning/15 text-warning',
-                      )}
-                    >
-                      {c.handledBy === 'ai' ? (
-                        <Bot className="h-2.5 w-2.5" />
-                      ) : (
-                        <User className="h-2.5 w-2.5" />
-                      )}
-                      {c.handledBy === 'ai' ? 'IA' : 'Asesor'}
-                    </span>
-                    {c.inboxName && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
-                        {c.inboxName}
-                      </span>
-                    )}
-                    {c.labels.length > 0 && (
-                      <span className="inline-flex items-center gap-1 truncate rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
-                        <Tag className="h-2.5 w-2.5 shrink-0" />
-                        <span className="truncate">
-                          {c.labels.slice(0, 2).join(', ')}
-                          {c.labels.length > 2 ? ` +${c.labels.length - 2}` : ''}
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </button>
+                {read.length > 0 && (
+                  <ConversationSection title="Leídos" count={read.length}>
+                    {read.map((c, i) => (
+                      <ConversationRow
+                        key={c.id}
+                        conversation={c}
+                        index={i}
+                        isActive={c.id === activeId}
+                        onSelect={onSelect}
+                        onContextMenu={handleContextMenu}
+                      />
+                    ))}
+                  </ConversationSection>
+                )}
+              </>
             )
-          })
+          })()
+        ) : (
+          sorted.map((c, i) => (
+            <ConversationRow
+              key={c.id}
+              conversation={c}
+              index={i}
+              isActive={c.id === activeId}
+              onSelect={onSelect}
+              onContextMenu={handleContextMenu}
+            />
+          ))
         )}
       </div>
 
@@ -608,5 +571,155 @@ export function ConversationList({
           document.body,
         )}
     </aside>
+  )
+}
+
+// Encabezado de sección dentro del filtro "Asignados" (ver el render de
+// arriba) — solo texto + contador, sin controles propios.
+function ConversationSection({
+  title,
+  count,
+  children,
+}: {
+  title: string
+  count: number
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border/60 bg-sidebar/95 px-4 py-1.5 backdrop-blur-sm">
+        <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
+          {title}
+        </p>
+        <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
+          {count}
+        </span>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// Una fila de la bandeja — extraída de ConversationList para poder
+// reusarla tanto en la lista plana como en las dos secciones de "Asignados"
+// (ver groupByReadStatus más arriba) sin duplicar el markup.
+function ConversationRow({
+  conversation: c,
+  index,
+  isActive,
+  onSelect,
+  onContextMenu,
+}: {
+  conversation: ChatwootConversation
+  index: number
+  isActive: boolean
+  onSelect: (id: string) => void
+  onContextMenu: (e: React.MouseEvent, id: string) => void
+}) {
+  const color = avatarColor(c.phone || c.contactName)
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(c.id)}
+      onContextMenu={(e) => onContextMenu(e, c.id)}
+      style={{ animationDelay: `${Math.min(index, 20) * 40}ms` }}
+      className={cn(
+        'animate-row-assemble flex items-start gap-3 border-b border-border/60 px-4 py-3 text-left transition-colors w-full',
+        isActive ? 'bg-primary/10' : 'hover:bg-secondary/60',
+      )}
+    >
+      <div className="relative shrink-0">
+        {c.avatarUrl ? (
+
+          <img
+            src={c.avatarUrl}
+            alt=""
+            className="h-11 w-11 rounded-full object-cover ring-1 ring-border"
+          />
+        ) : (
+          <div
+            className="flex h-11 w-11 items-center justify-center rounded-full text-sm font-semibold ring-1 ring-border"
+            style={{ backgroundColor: color.bg, color: color.fg }}
+          >
+            {c.contactName.charAt(0)}
+          </div>
+        )}
+        {c.online && (
+          <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-sidebar bg-success" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <p className="truncate text-sm font-semibold text-foreground">
+            {c.contactName}
+          </p>
+          <span className="shrink-0 font-mono text-[0.65rem] text-muted-foreground">
+            {formatRelativeTime(c.lastMessageAt)}
+          </span>
+        </div>
+        <div className="mt-0.5 flex items-center justify-between gap-2">
+          <p className="flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground">
+            {/* Check/doble check estilo WhatsApp — solo cuando el ÚLTIMO
+                mensaje del hilo (el mismo que se previsualiza acá) es
+                saliente, ver lastMessageStatus en chatwoot-sync.ts /
+                chatwoot-db.ts. Azul solo si el cliente ya lo leyó, mismo
+                criterio de color que message-bubble.tsx. */}
+            {!c.typing && c.lastMessageStatus && (
+              <span
+                className={cn(
+                  'shrink-0',
+                  c.lastMessageStatus === 'read' ? 'text-[oklch(0.72_0.15_220)]' : 'text-muted-foreground',
+                )}
+              >
+                {c.lastMessageStatus === 'sent' ? (
+                  <Check className="h-3 w-3" />
+                ) : (
+                  <CheckCheck className="h-3 w-3" />
+                )}
+              </span>
+            )}
+            <span className="truncate">
+              {c.typing ? <span className="text-success">escribiendo…</span> : c.lastMessage}
+            </span>
+          </p>
+          {c.unreadCount > 0 && (
+            <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-unread px-1 font-mono text-[0.6rem] font-bold text-primary-foreground">
+              {c.unreadCount}
+            </span>
+          )}
+        </div>
+        <div className="mt-1 flex items-center gap-1">
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.6rem] font-medium',
+              c.handledBy === 'ai'
+                ? 'bg-success/15 text-success'
+                : 'bg-warning/15 text-warning',
+            )}
+          >
+            {c.handledBy === 'ai' ? (
+              <Bot className="h-2.5 w-2.5" />
+            ) : (
+              <User className="h-2.5 w-2.5" />
+            )}
+            {c.handledBy === 'ai' ? 'IA' : 'Asesor'}
+          </span>
+          {c.inboxName && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
+              {c.inboxName}
+            </span>
+          )}
+          {c.labels.length > 0 && (
+            <span className="inline-flex items-center gap-1 truncate rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
+              <Tag className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">
+                {c.labels.slice(0, 2).join(', ')}
+                {c.labels.length > 2 ? ` +${c.labels.length - 2}` : ''}
+              </span>
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
   )
 }

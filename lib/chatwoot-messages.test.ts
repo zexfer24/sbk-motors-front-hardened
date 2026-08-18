@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { mergeSystemEvents, oldestRealMessageId } from "@/lib/chatwoot-messages"
+import {
+  mergeRefreshedMessages,
+  mergeSystemEvents,
+  normalizeMessageStatus,
+  oldestRealMessageId,
+} from "@/lib/chatwoot-messages"
 import type { ChatwootMessage } from "@/lib/types/chatwoot"
 
 function realMsg(id: string, createdAt: string): ChatwootMessage {
@@ -85,5 +90,64 @@ describe("mergeSystemEvents", () => {
   it("returns the messages unchanged when there are no events", () => {
     const messages = [realMsg("1", "2026-08-12T19:00:00.000Z")]
     expect(mergeSystemEvents(messages, [])).toEqual(messages)
+  })
+})
+
+describe("mergeRefreshedMessages", () => {
+  it("repro del bug reportado: preserva el historial viejo cargado con 'Cargar mensajes anteriores' cuando llega un mensaje nuevo por SSE", () => {
+    // El asesor scrolleó arriba y cargó 3 mensajes viejos (loadOlderMessages
+    // los antepuso). Llega un mensaje nuevo del cliente -> el SSE dispara
+    // loadMessages(activeId), que trae la ÚLTIMA tanda de Chatwoot: solo los
+    // 2 más recientes (los viejos no vienen, Chatwoot no los repite sin
+    // `before`). Antes del fix esto reemplazaba `prev` entero y los 3
+    // mensajes viejos desaparecían de la pantalla.
+    const oldHistory = [
+      realMsg("1", "2026-08-12T18:00:00.000Z"),
+      realMsg("2", "2026-08-12T18:05:00.000Z"),
+      realMsg("3", "2026-08-12T18:10:00.000Z"),
+    ]
+    const currentPage = [
+      realMsg("4", "2026-08-12T19:00:00.000Z"),
+      realMsg("5", "2026-08-12T19:05:00.000Z"),
+    ]
+    const prev = [...oldHistory, ...currentPage]
+    const freshFromSse = [...currentPage, realMsg("6", "2026-08-12T19:10:00.000Z")]
+
+    const merged = mergeRefreshedMessages(prev, freshFromSse)
+
+    expect(merged.map((m) => m.id)).toEqual(["1", "2", "3", "4", "5", "6"])
+  })
+
+  it("no duplica un mensaje que ya estaba en prev y vuelve a venir en la tanda fresca", () => {
+    const prev = [realMsg("1", "2026-08-12T19:00:00.000Z"), realMsg("2", "2026-08-12T19:05:00.000Z")]
+    const fresh = [realMsg("2", "2026-08-12T19:05:00.000Z"), realMsg("3", "2026-08-12T19:10:00.000Z")]
+    const merged = mergeRefreshedMessages(prev, fresh)
+    expect(merged.map((m) => m.id)).toEqual(["1", "2", "3"])
+  })
+
+  it("con prev vacío (carga inicial de la conversación) devuelve la tanda fresca tal cual", () => {
+    const fresh = [realMsg("4", "2026-08-12T19:00:00.000Z")]
+    expect(mergeRefreshedMessages([], fresh)).toEqual(fresh)
+  })
+
+  it("con fresh vacío devuelve fresh (Chatwoot no tiene mensajes) en vez de conservar prev a ciegas", () => {
+    const prev = [realMsg("1", "2026-08-12T19:00:00.000Z")]
+    expect(mergeRefreshedMessages(prev, [])).toEqual([])
+  })
+})
+
+describe("normalizeMessageStatus", () => {
+  it.each(["sent", "delivered", "read"] as const)("deja pasar '%s' sin tocarlo", (status) => {
+    expect(normalizeMessageStatus(status)).toBe(status)
+  })
+
+  it("'failed' cae a 'sent' — mismo criterio que antes, ni el mensaje individual ni la miniatura distinguen fallos todavía", () => {
+    expect(normalizeMessageStatus("failed")).toBe("sent")
+  })
+
+  it("undefined/null/valor desconocido caen a 'sent'", () => {
+    expect(normalizeMessageStatus(undefined)).toBe("sent")
+    expect(normalizeMessageStatus(null)).toBe("sent")
+    expect(normalizeMessageStatus("algo_nuevo_que_chatwoot_invente")).toBe("sent")
   })
 })

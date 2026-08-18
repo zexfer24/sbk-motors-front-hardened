@@ -2,7 +2,8 @@ import { NextResponse } from "next/server"
 import { getConversation, addMessage } from "@/lib/api/chatwoot-demo-store"
 import { getChatwootAgentName, getChatwootConfig, chatwootFetch, chatwootFetchForm } from "@/lib/chatwoot/client"
 import { listSystemEvents } from "@/lib/api/chat-system-events"
-import { mergeSystemEvents } from "@/lib/chatwoot-messages"
+import { mergeSystemEvents, normalizeMessageStatus } from "@/lib/chatwoot-messages"
+import { validateAttachmentCount } from "@/lib/attachments"
 import type { ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
 import { guardConversationRead, guardConversationWrite, callerAgentId, callerApiToken } from "@/lib/chatwoot/authz"
 
@@ -165,6 +166,14 @@ async function buildOutgoingContentAttributes(
 
 // Envío de imágenes (p. ej. guías de envío) — solo funciona con Chatwoot
 // real configurado, el store de demo no simula adjuntos salientes.
+//
+// 2026-08-18 (pedido del cliente): acepta VARIOS archivos en un solo POST,
+// no solo uno — el front manda cada uno bajo el mismo campo `file` repetido
+// (ver sendImageMessage en lib/api/chatwoot.ts), acá se leen todos con
+// `getAll` y se arma un único mensaje con varios `attachments[]` (Chatwoot
+// ya lo soporta, ver message_builder.rb — @attachments.each). Sigue
+// aceptando un solo archivo igual que antes, `getAll` con una sola entrada
+// se comporta como `get`.
 async function handleAttachmentUpload(request: Request, id: string) {
   const config = getChatwootConfig()
   if (!config) {
@@ -172,9 +181,10 @@ async function handleAttachmentUpload(request: Request, id: string) {
   }
 
   const incomingForm = await request.formData().catch(() => null)
-  const file = incomingForm?.get("file")
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "archivo_requerido" }, { status: 400 })
+  const files = (incomingForm?.getAll("file") ?? []).filter((f): f is File => f instanceof File)
+  const countCheck = validateAttachmentCount(files.length)
+  if (!countCheck.ok) {
+    return NextResponse.json({ error: countCheck.error }, { status: 400 })
   }
   const caption = incomingForm?.get("content")
   const inReplyTo = validReplyId(incomingForm?.get("inReplyTo")?.toString() ?? undefined)
@@ -191,7 +201,7 @@ async function handleAttachmentUpload(request: Request, id: string) {
   // rama JSON de arriba.
   if (inReplyTo) outgoingForm.set("content_attributes[in_reply_to]", inReplyTo)
   if (sentByName) outgoingForm.set("content_attributes[sent_by_name]", sentByName)
-  outgoingForm.append("attachments[]", file, file.name)
+  for (const file of files) outgoingForm.append("attachments[]", file, file.name)
 
   try {
     // Mismo criterio que el POST de texto de arriba: token personal si el
@@ -261,23 +271,19 @@ function mapChatwootMessage(raw: Record<string, unknown>): ChatwootMessage {
       ? new Date((raw.created_at as number) * 1000).toISOString()
       : new Date().toISOString(),
     attachments: deleted ? [] : rawAttachments.map(mapChatwootAttachment),
-    status: mapMessageStatus(raw.status),
+    // Antes quedaba fijo en "delivered" para TODO mensaje saliente, así que
+    // un mensaje recién mandado y uno que el cliente ya leyó se veían con el
+    // mismo ✓✓ gris. Chatwoot sí trae el estado real acá, y lo mantiene al
+    // día vía el webhook `message_updated` (ver app/api/chatwoot/webhook) —
+    // cuando cambia, use-chatwoot.ts ya recarga los mensajes de la
+    // conversación activa, así que no hace falta tocar nada más para que el
+    // check se actualice solo. normalizeMessageStatus también la usan el
+    // listado vía API (chatwoot-sync.ts) y vía Postgres (chatwoot-db.ts)
+    // para el check/doble check de la miniatura — ver lib/chatwoot-messages.ts.
+    status: normalizeMessageStatus(raw.status),
     inReplyTo: inReplyToRaw != null ? String(inReplyToRaw) : null,
     deleted,
   }
-}
-
-const KNOWN_STATUSES = new Set(["sent", "delivered", "read"])
-
-// Antes quedaba fijo en "delivered" para TODO mensaje saliente, así que un
-// mensaje recién mandado y uno que el cliente ya leyó se veían con el mismo
-// ✓✓ gris. Chatwoot sí trae el estado real acá, y lo mantiene al día vía el
-// webhook `message_updated` (ver app/api/chatwoot/webhook) — cuando cambia,
-// use-chatwoot.ts ya recarga los mensajes de la conversación activa, así que
-// no hace falta tocar nada más para que el check se actualice solo.
-function mapMessageStatus(raw: unknown): "sent" | "delivered" | "read" {
-  const value = String(raw ?? "")
-  return KNOWN_STATUSES.has(value) ? (value as "sent" | "delivered" | "read") : "sent"
 }
 
 function mapChatwootAttachment(raw: Record<string, unknown>) {

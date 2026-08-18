@@ -17,7 +17,7 @@ import {
   type StartConversationInput,
 } from "@/lib/api/chatwoot"
 import { addOrder } from "@/lib/api/orders"
-import { oldestRealMessageId } from "@/lib/chatwoot-messages"
+import { mergeRefreshedMessages, oldestRealMessageId } from "@/lib/chatwoot-messages"
 import type { ChatwootConversation, ChatwootMessage, NewMessageInput } from "@/lib/types/chatwoot"
 import type { DataSource } from "@/lib/api/shared"
 import type { NewOrderDb } from "@/lib/types/order"
@@ -108,7 +108,15 @@ export function useChatwoot(active: boolean = true) {
     try {
       const data = await fetchMessages(conversationId)
       if (requestId !== messagesRequestId.current) return
-      setMessages(data.messages)
+      // BUG (reportado como "pierde historial", ver mergeRefreshedMessages en
+      // lib/chatwoot-messages.ts): esta función se reusa tanto para la carga
+      // inicial (prev ya está vacío por selectConversation, así que el merge
+      // no cambia nada) como para el refresco que dispara el SSE en cada
+      // "message_changed" de la conversación activa — antes hacía
+      // setMessages(data.messages) a secas, un reemplazo total que borraba
+      // cualquier historial viejo ya cargado con "Cargar mensajes
+      // anteriores" apenas llegaba un mensaje nuevo del cliente.
+      setMessages((prev) => mergeRefreshedMessages(prev, data.messages))
       // Chatwoot no manda un total ni un "hay más" explícito — si la
       // primera tanda viene vacía, no hay nada que paginar; si trae algo,
       // se asume que puede haber más atrás hasta que un `before` devuelva
@@ -359,13 +367,19 @@ export function useChatwoot(active: boolean = true) {
   )
 
   const sendImage = useCallback(
-    async (file: File, caption?: string, inReplyTo?: string) => {
+    async (files: File[], caption?: string, inReplyTo?: string) => {
       if (!activeId) return
-      const msg = await sendImageMessage(activeId, file, caption, inReplyTo)
+      const msg = await sendImageMessage(activeId, files, caption, inReplyTo)
       setMessages((prev) => [...prev, msg])
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === activeId ? { ...c, lastMessage: msg.content || '📷 Imagen', handledBy: "human" } : c,
+          c.id === activeId
+            ? {
+                ...c,
+                lastMessage: msg.content || (files.length > 1 ? `📷 ${files.length} imágenes` : '📷 Imagen'),
+                handledBy: "human",
+              }
+            : c,
         ),
       )
     },

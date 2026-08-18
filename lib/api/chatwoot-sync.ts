@@ -10,6 +10,7 @@ import { chatwootFetch, getChatwootConfig } from "@/lib/chatwoot/client"
 import { upsertContactFromChatwoot } from "@/lib/api/contacts-demo-store"
 import { listInboxes } from "@/lib/chatwoot/inboxes"
 import { fetchConversationsFromDb } from "@/lib/api/chatwoot-db"
+import { normalizeMessageStatus } from "@/lib/chatwoot-messages"
 
 // message_type 2 = "activity" (avisos nativos de Chatwoot: "Conversación
 // asignada a X", "resuelta", etc. — ver mapChatwootMessage en
@@ -53,6 +54,13 @@ export function mapChatwootConversation(
     lastMessageAt: lastMsg
       ? new Date((lastMsg.created_at as number) * 1000).toISOString()
       : null,
+    // message_type 1 = "outgoing" — mismo criterio que mapRow en
+    // chatwoot-db.ts: solo se muestra check/doble check cuando el ÚLTIMO
+    // mensaje del hilo (el mismo que arma el preview de arriba) es nuestro.
+    lastMessageStatus:
+      lastMsg && Number(lastMsg.message_type ?? 0) === 1
+        ? normalizeMessageStatus(lastMsg.status)
+        : null,
     createdAt: new Date(((raw.created_at as number) ?? 0) * 1000).toISOString(),
     unreadCount: (raw.unread_count as number) ?? 0,
     status: String(raw.status ?? "open"),

@@ -39,6 +39,8 @@ export interface ChatwootConversation {
   inboxName?: string | null
   lastMessage: string | null
   lastMessageAt: string | null
+  /** Status (sent/delivered/read) del último mensaje del hilo — SOLO si ese último mensaje es saliente (nuestro), null en cualquier otro caso (lo último es del cliente, o no hay mensajes). Mismo criterio que WhatsApp: el check de la miniatura solo aparece cuando lo último que se ve en el preview es algo que mandamos nosotros. */
+  lastMessageStatus?: "sent" | "delivered" | "read" | null
   /** cuándo se abrió la conversación (distinto de lastMessageAt) — usado para "nuevos chats" del Panel */
   createdAt: string
   unreadCount: number

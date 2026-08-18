@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Bot } from 'lucide-react'
+import { AlertTriangle, Bot, RefreshCw } from 'lucide-react'
 import { WhatsappIcon } from '@/components/chat/whatsapp-icon'
 import { ConversationList } from '@/components/chat/conversation-list'
 import { ChatPanel } from '@/components/chat/chat-panel'
@@ -30,6 +30,8 @@ export function ChatView({ active }: ChatViewProps) {
     loadOlderMessages,
     source,
     loading,
+    error,
+    reload,
     intervened,
     selectConversation,
     send,
@@ -209,6 +211,30 @@ export function ChatView({ active }: ChatViewProps) {
           </span>
         </div>
       </header>
+
+      {/* BUG (reportado como "no carga los chats"): antes de esto, cuando
+          fetchConversations() fallaba (Chatwoot caído, la vía Postgres y su
+          fallback a la API fallando las dos, o simple corte de red), el
+          hook ya calculaba `error` pero nadie lo leía acá — el asesor solo
+          veía una bandeja vacía, sin ningún indicio de que algo se rompió
+          en vez de "no hay chats de verdad". Ahora se muestra el aviso con
+          un reintento manual, sin esperar al próximo polling/SSE. */}
+      {error && (
+        <div className="animate-blur-in flex items-center justify-between gap-3 border-b border-primary/30 bg-primary/10 px-4 py-2 text-xs text-primary sm:px-6">
+          <span className="flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            {error}
+          </span>
+          <button
+            type="button"
+            onClick={() => reload()}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-primary/30 px-2 py-1 font-semibold transition-colors hover:bg-primary/15"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Reintentar
+          </button>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         {/* Sin overflow acá: ConversationList ya trae su propio contenedor

@@ -33,6 +33,7 @@
 import { Pool } from "pg"
 import type { QueryResultRow } from "pg"
 import type { MappedConversation } from "@/lib/api/chatwoot-sync"
+import { normalizeMessageStatus } from "@/lib/chatwoot-messages"
 
 interface ChatwootDbConfig {
   host: string
@@ -198,6 +199,8 @@ interface ConversationRow {
   assignee_name: string | null
   last_message: string | null
   last_message_at: string | null
+  last_message_type: number | null
+  last_message_status: string | null
   unread_count: number
 }
 
@@ -240,6 +243,8 @@ const CONVERSATIONS_QUERY = `
     u.name AS assignee_name,
     lm.content AS last_message,
     to_char(lm.created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last_message_at,
+    lm.message_type AS last_message_type,
+    lm.status AS last_message_status,
     COALESCE(uc.unread_count, 0)::int AS unread_count
   FROM conversations c
   LEFT JOIN inboxes ib ON ib.id = c.inbox_id
@@ -252,8 +257,16 @@ const CONVERSATIONS_QUERY = `
   -- la lista de conversaciones mostraba ese texto nativo en vez del último
   -- mensaje real enviado o recibido (ver el mismo fix del lado API en
   -- lastRealMessage, lib/api/chatwoot-sync.ts).
+  --
+  -- message_type y status también salen de acá (no de una subquery aparte)
+  -- para el check/doble check de la miniatura (mapRow, más abajo): mismo
+  -- criterio que WhatsApp — el check solo tiene sentido cuando el ÚLTIMO
+  -- mensaje del hilo es nuestro, así que tiene que ser exactamente esta
+  -- misma fila, no "el último mensaje saliente" buscado aparte (eso
+  -- mostraría un check junto al preview del mensaje del cliente si el
+  -- cliente ya contestó después).
   LEFT JOIN LATERAL (
-    SELECT m.content, m.created_at
+    SELECT m.content, m.created_at, m.message_type, m.status
     FROM messages m
     WHERE m.conversation_id = c.id AND m.message_type != 2
     ORDER BY m.created_at DESC
@@ -270,7 +283,10 @@ const CONVERSATIONS_QUERY = `
   ORDER BY c.id DESC
 `
 
-function mapRow(row: ConversationRow): MappedConversation {
+// Exportada para poder probar el mapeo fila-a-fila sin una conexión real a
+// Postgres (mismo patrón que mapChatwootConversation en chatwoot-sync.ts,
+// ver chatwoot-db.test.ts).
+export function mapRow(row: ConversationRow): MappedConversation {
   const assigneeId = row.assignee_id != null ? Number(row.assignee_id) : null
   const inboxId = row.inbox_id != null ? Number(row.inbox_id) : null
   const labels = row.labels_raw
@@ -297,6 +313,9 @@ function mapRow(row: ConversationRow): MappedConversation {
     inboxName: row.inbox_name ?? (inboxId !== null ? `Buzón ${inboxId}` : null),
     lastMessage: row.last_message ?? null,
     lastMessageAt: row.last_message_at,
+    // enum real de Chatwoot: message_type 1 = "outgoing" (ver STATUS_BY_CODE
+    // arriba para el enum de conversation.status, este es el de message.rb).
+    lastMessageStatus: row.last_message_type === 1 ? normalizeMessageStatus(row.last_message_status) : null,
     createdAt: row.created_at,
     unreadCount: row.unread_count,
     status: STATUS_BY_CODE[row.status] ?? "open",

@@ -31,6 +31,7 @@ import { ImagePreviewModal } from '@/components/chat/image-preview-modal'
 import { QuickRepliesManagerModal } from '@/components/chat/quick-replies-manager-modal'
 import { LabelsManagerModal } from '@/components/chat/labels-manager-modal'
 import { EmojiPicker } from '@/components/chat/emoji-picker'
+import { removeAt } from '@/lib/attachments'
 import { avatarColor } from '@/lib/avatar-color'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { useQuickReplies } from '@/lib/hooks/use-quick-replies'
@@ -89,7 +90,7 @@ interface ChatPanelProps {
   intervened: boolean
   onBack: () => void
   onSend: (text: string, inReplyTo?: string) => Promise<{ error: string } | { ok: true }>
-  onSendImage: (file: File, caption?: string, inReplyTo?: string) => Promise<void>
+  onSendImage: (files: File[], caption?: string, inReplyTo?: string) => Promise<void>
   onDeleteMessage: (messageId: string) => Promise<{ error: string } | { ok: true }>
   onToggleIntervene: () => Promise<{ error: string } | { ok: true }>
   onAssign: (agentId: number | null) => Promise<{ error: string } | { ok: true }>
@@ -129,7 +130,10 @@ export function ChatPanel({
   const [closeSaleOpen, setCloseSaleOpen] = useState(false)
   const [imageUploading, setImageUploading] = useState(false)
   const [imageError, setImageError] = useState<string | null>(null)
-  const [imagePreview, setImagePreview] = useState<{ file: File; url: string } | null>(null)
+  // Un lote de fotos, no una sola (2026-08-18, pedido del cliente) — `null`
+  // cerrado, array (nunca vacío mientras está abierto, ver
+  // removeImageFromPreview) con una entrada por foto seleccionada/pegada.
+  const [imagePreview, setImagePreview] = useState<{ file: File; url: string }[] | null>(null)
   const [imageCaption, setImageCaption] = useState('')
   const [quickRepliesOpen, setQuickRepliesOpen] = useState(false)
   const [quickRepliesManagerOpen, setQuickRepliesManagerOpen] = useState(false)
@@ -154,6 +158,16 @@ export function ChatPanel({
   const [editDraft, setEditDraft] = useState('')
   const [noteEditSaving, setNoteEditSaving] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Un nodo del DOM por mensaje CARGADO — se usa solo para el click-to-jump
+  // de una respuesta citada (ver handleJumpToQuoted más abajo). No es un
+  // useState: no necesita re-render por sí solo, solo lectura puntual al
+  // clickear una cita. `null` en el callback ref borra la entrada al
+  // desmontar esa fila (mensaje viejo reemplazado por mergeRefreshedMessages,
+  // conversación cambiada, etc.) — sin esto el Map acumularía nodos de DOM
+  // ya desconectados.
+  const messageNodesRef = useRef<Map<string, HTMLDivElement>>(new Map())
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -350,6 +364,30 @@ export function ChatPanel({
     textareaRef.current?.focus()
   }
 
+  // Click en la cita de un mensaje ("respondiendo a...", ver el bloque
+  // clickeable en message-bubble.tsx) — salta al mensaje original y lo
+  // resalta un momento. Solo se ofrece cuando ese mensaje YA está en
+  // `messages` (replyPreview resuelto, ver el .map de abajo): si no está
+  // cargado (parte del historial más vieja, todavía sin traer con "Cargar
+  // mensajes anteriores"), message-bubble.tsx no vuelve esa cita clickeable
+  // en primer lugar, así que acá no hace falta manejar el caso "no
+  // encontrado" como error — solo como no-op defensivo por si el nodo ya se
+  // desmontó justo entre el click y este handler.
+  function handleJumpToQuoted(messageId: string) {
+    const node = messageNodesRef.current.get(messageId)
+    if (!node) return
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current)
+    setHighlightedMessageId(messageId)
+    highlightTimeoutRef.current = setTimeout(() => setHighlightedMessageId(null), 1600)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current)
+    }
+  }, [])
+
   // Aviso explícito ANTES de confirmar: esto borra el mensaje de este panel
   // (y de Chatwoot), pero si el cliente ya lo vio en WhatsApp lo sigue
   // viendo ahí — ni Chatwoot ni la Cloud API de Meta exponen un "borrar para
@@ -545,22 +583,38 @@ export function ChatPanel({
 
   // Abre la previsualización en vez de mandar directo — antes, pegar una
   // captura de pantalla la enviaba de una, sin poder revisarla ni agregarle
-  // un pie de foto antes de que el cliente la viera.
-  function openImagePreview(file: File) {
+  // un pie de foto antes de que el cliente la viera. Acepta un lote
+  // (2026-08-18, pedido del cliente: seleccionar/pegar varias fotos a la
+  // vez) — reemplaza cualquier previsualización abierta en vez de agregarse
+  // a ella, mismo criterio simple que ya tenía con una sola foto.
+  function openImagePreview(files: File[]) {
+    if (files.length === 0) return
     setImageError(null)
-    setImagePreview({ file, url: URL.createObjectURL(file) })
+    setImagePreview(files.map((file) => ({ file, url: URL.createObjectURL(file) })))
     setImageCaption('')
   }
 
   function closeImagePreview() {
-    if (imagePreview) URL.revokeObjectURL(imagePreview.url)
+    if (imagePreview) for (const item of imagePreview) URL.revokeObjectURL(item.url)
     setImagePreview(null)
     setImageCaption('')
     setImageError(null)
   }
 
+  // Quitar una foto del lote antes de confirmar el envío (grid tipo
+  // WhatsApp, ver ImagePreviewModal) — removeAt (lib/attachments.ts) cierra
+  // el modal entero (devuelve null) si era la última que quedaba, en vez de
+  // dejarlo abierto vacío.
+  function removeImageFromPreview(index: number) {
+    setImagePreview((prev) => {
+      if (!prev) return prev
+      URL.revokeObjectURL(prev[index].url)
+      return removeAt(prev, index)
+    })
+  }
+
   async function confirmSendImage() {
-    if (!imagePreview) return
+    if (!imagePreview || imagePreview.length === 0) return
     // `replyTarget` se limpia recién si el envío tiene éxito — si se
     // limpiaba antes del await y el envío fallaba, un reintento desde este
     // mismo modal mandaba la imagen suelta, sin el enlace de "respondiendo
@@ -569,35 +623,44 @@ export function ChatPanel({
     setImageUploading(true)
     setImageError(null)
     try {
-      await onSendImage(imagePreview.file, imageCaption.trim() || undefined, inReplyTo)
+      await onSendImage(
+        imagePreview.map((item) => item.file),
+        imageCaption.trim() || undefined,
+        inReplyTo,
+      )
       setReplyTarget(null)
       closeImagePreview()
     } catch {
-      setImageError('No se pudo enviar la imagen. Intenta de nuevo.')
+      setImageError(
+        imagePreview.length > 1 ? 'No se pudieron enviar las imágenes. Intenta de nuevo.' : 'No se pudo enviar la imagen. Intenta de nuevo.',
+      )
     } finally {
       setImageUploading(false)
     }
   }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files ?? [])
     e.target.value = ''
-    if (!file) return
-    openImagePreview(file)
+    if (files.length === 0) return
+    openImagePreview(files)
   }
 
-  // Pegar una imagen copiada (captura de pantalla, "Copiar imagen" del
-  // navegador, etc.) abre la misma previsualización — sin esto, la única
-  // forma de mandar una imagen era guardarla a disco primero y elegirla con
-  // el picker de archivos.
+  // Pegar una o varias imágenes copiadas (captura de pantalla, varios
+  // archivos copiados del explorador, "Copiar imagen" del navegador, etc.)
+  // abre la misma previsualización — sin esto, la única forma de mandar una
+  // imagen era guardarla a disco primero y elegirla con el picker de
+  // archivos. Junta TODOS los items de imagen del portapapeles (2026-08-18,
+  // pedido del cliente: pegar varios archivos copiados de una), no solo el
+  // primero.
   function handleComposerPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
+    const imageItems = Array.from(e.clipboardData?.items ?? []).filter((i) =>
       i.type.startsWith('image/'),
     )
-    if (!item) return
+    if (imageItems.length === 0) return
     e.preventDefault()
-    const file = item.getAsFile()
-    if (file) openImagePreview(file)
+    const files = imageItems.map((i) => i.getAsFile()).filter((f): f is File => f !== null)
+    openImagePreview(files)
   }
 
   function insertQuickReply(content: string) {
@@ -1105,7 +1168,14 @@ export function ChatPanel({
           </div>
         ) : (
           messages.map((m, i) => (
-            <div key={m.id} className="flex flex-col gap-2">
+            <div
+              key={m.id}
+              ref={(el) => {
+                if (el) messageNodesRef.current.set(m.id, el)
+                else messageNodesRef.current.delete(m.id)
+              }}
+              className="flex flex-col gap-2"
+            >
               {dateSeparators[i] && (
                 <div className="flex w-full justify-center py-1">
                   <span className="rounded-full bg-secondary/70 px-3 py-1 text-center text-[0.7rem] font-medium text-muted-foreground">
@@ -1117,7 +1187,9 @@ export function ChatPanel({
                 message={m}
                 onReply={handleReply}
                 onDelete={handleDeleteMessage}
+                onJumpToQuoted={handleJumpToQuoted}
                 replyPreview={m.inReplyTo ? messagesById.get(m.inReplyTo) ?? null : null}
+                highlighted={highlightedMessageId === m.id}
               />
             </div>
           ))
@@ -1197,6 +1269,7 @@ export function ChatPanel({
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -1341,13 +1414,14 @@ export function ChatPanel({
 
       {imagePreview && (
         <ImagePreviewModal
-          imageUrl={imagePreview.url}
+          items={imagePreview}
           caption={imageCaption}
           onCaptionChange={setImageCaption}
           sending={imageUploading}
           error={imageError}
           onCancel={closeImagePreview}
           onConfirm={confirmSendImage}
+          onRemove={removeImageFromPreview}
         />
       )}
 
