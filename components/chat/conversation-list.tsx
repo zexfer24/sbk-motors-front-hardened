@@ -3,7 +3,6 @@
 import {
   ArrowDownNarrowWide,
   ArrowUpNarrowWide,
-  Bot,
   Check,
   CheckCheck,
   ChevronDown,
@@ -14,7 +13,6 @@ import {
   MessageSquarePlus,
   Search,
   Tag,
-  User,
   UserCog,
   X,
 } from 'lucide-react'
@@ -88,11 +86,14 @@ export function ConversationList({
   const viewerAgentId = user?.chatwootAgentId ?? null
 
   const [search, setSearch] = useState('')
-  // Ids que matchean por CONTENIDO de mensajes (no nombre/teléfono) — ver el
+  // Ids que matchean por CONTENIDO de mensajes (no nombre/teléfono) → el
+  // fragmento del mensaje real donde aparece la frase (ver buildSnippet,
+  // lib/message-snippet.ts), para mostrar EN la fila dónde matchea en vez
+  // del último mensaje del hilo (que puede no tener nada que ver). Ver el
   // efecto debounced más abajo y app/api/chatwoot/conversations/search-content.
   // Aparte de `filtered`/`matchesSearch` porque depende de una llamada async
   // a la DB, no de datos ya en memoria.
-  const [contentMatchIds, setContentMatchIds] = useState<Set<string>>(new Set())
+  const [contentMatches, setContentMatches] = useState<Map<string, string>>(new Map())
   // null = "Todos" (default). Estado y categorías se combinan con AND —
   // dentro de categorías, cualquiera de las seleccionadas cuenta (OR).
   const [statusFilter, setStatusFilter] = useState<StatusKey | null>(null)
@@ -127,7 +128,7 @@ export function ConversationList({
   useEffect(() => {
     const trimmed = search.trim()
     if (trimmed.length < MIN_SEARCH_PHRASE_LENGTH) {
-      setContentMatchIds(new Set())
+      setContentMatches(new Map())
       return
     }
 
@@ -138,8 +139,9 @@ export function ConversationList({
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (data && Array.isArray(data.conversationIds)) {
-            setContentMatchIds(new Set(data.conversationIds))
+          if (data && Array.isArray(data.matches)) {
+            const matches = data.matches as { conversationId: string; snippet: string }[]
+            setContentMatches(new Map(matches.map((m) => [m.conversationId, m.snippet])))
           }
         })
         .catch(() => {
@@ -221,7 +223,7 @@ export function ConversationList({
     const matchesSearch =
       normalizarTexto(c.contactName).includes(normalizarTexto(search)) ||
       c.phone.includes(search) ||
-      contentMatchIds.has(c.id)
+      contentMatches.has(c.id)
     if (!matchesSearch) return false
     if (statusFilter && !matchesStatus(c, statusFilter, viewerAgentId)) return false
     if (categoryFilters.length > 0 && !categoryFilters.some((cat) => c.labels.includes(cat))) {
@@ -479,6 +481,7 @@ export function ConversationList({
                         isActive={c.id === activeId}
                         onSelect={onSelect}
                         onContextMenu={handleContextMenu}
+                        searchSnippet={contentMatches.get(c.id)}
                       />
                     ))}
                   </ConversationSection>
@@ -493,6 +496,7 @@ export function ConversationList({
                         isActive={c.id === activeId}
                         onSelect={onSelect}
                         onContextMenu={handleContextMenu}
+                        searchSnippet={contentMatches.get(c.id)}
                       />
                     ))}
                   </ConversationSection>
@@ -509,6 +513,7 @@ export function ConversationList({
               isActive={c.id === activeId}
               onSelect={onSelect}
               onContextMenu={handleContextMenu}
+              searchSnippet={contentMatches.get(c.id)}
             />
           ))
         )}
@@ -654,12 +659,18 @@ function ConversationRow({
   isActive,
   onSelect,
   onContextMenu,
+  searchSnippet,
 }: {
   conversation: ChatwootConversation
   index: number
   isActive: boolean
   onSelect: (id: string) => void
   onContextMenu: (e: React.MouseEvent, id: string) => void
+  /** Fragmento del mensaje real donde matchea la búsqueda por contenido
+   * (ver contentMatches en ConversationList) — reemplaza el preview de
+   * lastMessage cuando está presente, para mostrar DÓNDE aparece la frase
+   * en vez del último mensaje del hilo (que puede no tener nada que ver). */
+  searchSnippet?: string
 }) {
   const color = avatarColor(c.phone || c.contactName)
   return (
@@ -702,17 +713,19 @@ function ConversationRow({
             {formatRelativeTime(c.lastMessageAt)}
           </span>
         </div>
-        <div className="mt-0.5 flex items-center justify-between gap-2">
-          <p className="flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground">
+        <div className="mt-0.5 flex items-start justify-between gap-2">
+          <p className="flex min-w-0 items-start gap-1 text-xs text-muted-foreground">
             {/* Check/doble check estilo WhatsApp — solo cuando el ÚLTIMO
-                mensaje del hilo (el mismo que se previsualiza acá) es
-                saliente, ver lastMessageStatus en chatwoot-sync.ts /
-                chatwoot-db.ts. Azul solo si el cliente ya lo leyó, mismo
-                criterio de color que message-bubble.tsx. */}
-            {!c.typing && c.lastMessageStatus && (
+                mensaje del hilo es saliente Y no se está mostrando un
+                fragmento de búsqueda (ese fragmento puede ser un mensaje
+                viejo, entrante — el check no aplica ahí), ver
+                lastMessageStatus en chatwoot-sync.ts / chatwoot-db.ts. Azul
+                solo si el cliente ya lo leyó, mismo criterio de color que
+                message-bubble.tsx. */}
+            {!c.typing && !searchSnippet && c.lastMessageStatus && (
               <span
                 className={cn(
-                  'shrink-0',
+                  'mt-0.5 shrink-0',
                   c.lastMessageStatus === 'read' ? 'text-[oklch(0.72_0.15_220)]' : 'text-muted-foreground',
                 )}
               >
@@ -723,8 +736,17 @@ function ConversationRow({
                 )}
               </span>
             )}
-            <span className="truncate">
-              {c.typing ? <span className="text-success">escribiendo…</span> : c.lastMessage}
+            {/* Sin badges de IA/Asesor ni de bandeja acá (se sacaron para
+                dar más espacio al preview) — el mensaje puede ocupar hasta
+                2 líneas (line-clamp-2) en vez de cortarse en una sola, y al
+                buscar por contenido se ve el fragmento real donde aparece
+                la frase en vez del último mensaje del hilo. */}
+            <span className="line-clamp-2">
+              {c.typing ? (
+                <span className="text-success">escribiendo…</span>
+              ) : (
+                (searchSnippet ?? c.lastMessage)
+              )}
             </span>
           </p>
           {c.unreadCount > 0 && (
@@ -733,28 +755,8 @@ function ConversationRow({
             </span>
           )}
         </div>
-        <div className="mt-1 flex items-center gap-1">
-          <span
-            className={cn(
-              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.6rem] font-medium',
-              c.handledBy === 'ai'
-                ? 'bg-success/15 text-success'
-                : 'bg-warning/15 text-warning',
-            )}
-          >
-            {c.handledBy === 'ai' ? (
-              <Bot className="h-2.5 w-2.5" />
-            ) : (
-              <User className="h-2.5 w-2.5" />
-            )}
-            {c.handledBy === 'ai' ? 'IA' : 'Asesor'}
-          </span>
-          {c.inboxName && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
-              {c.inboxName}
-            </span>
-          )}
-          {c.labels.length > 0 && (
+        {c.labels.length > 0 && (
+          <div className="mt-1 flex items-center gap-1">
             <span className="inline-flex items-center gap-1 truncate rounded-full bg-secondary px-1.5 py-0.5 text-[0.6rem] font-medium text-muted-foreground">
               <Tag className="h-2.5 w-2.5 shrink-0" />
               <span className="truncate">
@@ -762,8 +764,8 @@ function ConversationRow({
                 {c.labels.length > 2 ? ` +${c.labels.length - 2}` : ''}
               </span>
             </span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </button>
   )

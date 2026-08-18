@@ -354,6 +354,12 @@ export async function fetchConversationsFromDb(
 
 interface ContentMatchRow extends QueryResultRow {
   conversation_id: number
+  content: string
+}
+
+export interface ContentMatch {
+  conversationId: string
+  content: string
 }
 
 // Buscador de la bandeja de WhatsApp por CONTENIDO de mensajes (ver
@@ -361,6 +367,13 @@ interface ContentMatchRow extends QueryResultRow {
 // front solo trae el último mensaje de cada conversación (lastMessage), así
 // que una frase mencionada en un mensaje viejo no es encontrable filtrando
 // solo lo que ya llegó al navegador; hace falta esta consulta directa.
+//
+// Trae `content` (no solo el id) para que el front pueda mostrar EN QUÉ
+// mensaje aparece la frase (ver buildSnippet, lib/message-snippet.ts) en vez
+// de mostrar el último mensaje del hilo, que puede no tener nada que ver con
+// lo buscado. DISTINCT ON (conversation_id) ... ORDER BY conversation_id,
+// created_at DESC se queda con el mensaje MÁS RECIENTE que matchea por cada
+// conversación (si varios mensajes del mismo hilo mencionan la frase).
 //
 // regexp_replace(...,'[¡!]','','g') normaliza mayúsculas/signos de
 // exclamación en ambos lados (contenido guardado y frase buscada) para que
@@ -371,11 +384,12 @@ interface ContentMatchRow extends QueryResultRow {
 // techo de seguridad, igual que CONVERSATIONS_PAGE_SAFETY_CAP en
 // chatwoot-sync.ts — no debería alcanzarse con el volumen actual.
 const CONTENT_SEARCH_QUERY = `
-  SELECT DISTINCT conversation_id
+  SELECT DISTINCT ON (conversation_id) conversation_id, content
   FROM messages
   WHERE account_id = $1
     AND regexp_replace(lower(content), '[¡!]', '', 'g')
         LIKE '%' || regexp_replace(lower($2), '[¡!]', '', 'g') || '%'
+  ORDER BY conversation_id, created_at DESC
   LIMIT 500
 `
 
@@ -383,11 +397,11 @@ const CONTENT_SEARCH_QUERY = `
 // mismo contrato que fetchConversationsFromDb. searchConversationsByContent
 // (lib/api/search-conversations-by-content.ts) trata `null` como "sin
 // resultados", nunca lanza hacia la ruta API.
-export async function searchConversationIdsByContent(
+export async function searchMessagesByContent(
   accountId: string,
   phrase: string,
-): Promise<string[] | null> {
+): Promise<ContentMatch[] | null> {
   const rows = await queryChatwootDb<ContentMatchRow>(CONTENT_SEARCH_QUERY, [Number(accountId), phrase])
   if (!rows) return null
-  return rows.map((r) => String(r.conversation_id))
+  return rows.map((r) => ({ conversationId: String(r.conversation_id), content: r.content }))
 }
